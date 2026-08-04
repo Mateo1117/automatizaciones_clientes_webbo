@@ -192,15 +192,55 @@ El filtro decía `"values": ["Tatika"]` aunque el nodo se llama *"Tatika y Colin
 Toda la rama de Colina del Viento del flujo automático estaba muerta. Corregido a
 `["Tatika", "Colina Del Viento"]`.
 
-### 3. WhatsApp: número de origen inválido
+### 3. WhatsApp: al token de n8n le faltan permisos (no es el número)
 
 ```
 WhatsApp Business Cloud12: Object with ID '696830786845937' does not exist,
 cannot be loaded due to missing permissions, or does not support this operation.
 ```
 
-**Esto no se corrigió** — hay que revisarlo en Meta Business. Es un problema de
-configuración/permisos del número, no del workflow.
+El número **está bien**: `+57 302 7560683` (ConaringTatiká) aparece *Conectado* con calidad
+*Alta* en el Administrador de WhatsApp. El problema es el token de la credencial
+`WhatsApp conaring` (`n9u0q4bVTSFGubcI`). Consultando la Graph API a través de n8n:
+
+```
+GET /v21.0/me/permissions
+{ "data": [ { "permission": "public_profile", "status": "granted" } ] }
+```
+
+Una sola permission. Faltan las dos que exige WhatsApp Cloud API:
+
+| Permiso | Para qué | Estado |
+|---|---|---|
+| `whatsapp_business_messaging` | enviar mensajes | ausente |
+| `whatsapp_business_management` | leer números y plantillas | ausente |
+
+Lo demás que se comprobó con ese mismo token:
+
+| Consulta | Resultado |
+|---|---|
+| `GET /me` | `122186025470899698` — "APP SOLVOT CONARING" |
+| `GET /2034375463493184` (negocio) | OK — "Conaring" |
+| `GET /1503335814370202` (WABA) | `GraphMethodException 100/33` — no la ve |
+| `GET /1503335814370202/phone_numbers` | `#200 You do not have permission` |
+| `GET /2034375463493184/owned_whatsapp_business_accounts` | `#200 Requires business_management` |
+
+El token quedó asociado al negocio pero **la cuenta de WhatsApp nunca se le asignó como
+activo**. El objeto `696830786845937` existe; el token no puede verlo.
+
+**Esto no se corrigió porque hay que hacerlo en Meta Business:**
+
+1. business.facebook.com → Configuración del negocio → **Usuarios → Usuarios del sistema**
+2. Crear `n8n-conaring` (o usar el existente), rol Administrador
+3. **Agregar activos → Cuentas de WhatsApp** → la que tiene `+57 302 7560683` → *Control total*
+4. **Generar token** con `whatsapp_business_messaging` + `whatsapp_business_management`
+5. Confirmar el **Phone number ID** en developers.facebook.com → app → WhatsApp → *API Setup*
+   (los 24 nodos usan `696830786845937`)
+6. Pegar el token en n8n → Credentials → `WhatsApp conaring`
+
+Un token de usuario del sistema no caduca, así que además deja de romperse cada 60 días.
+Una vez actualizada la credencial se puede revalidar desde n8n sin necesidad de entrar a Meta
+ni de compartir el token.
 
 ### 4. Paths de webhook con espacios → 404
 
@@ -255,8 +295,9 @@ Texto según el evento:
 
 Está en `docs/revision-flow-tatika-colina-conaring.md` con más detalle. Lo pendiente:
 
-- **Número de WhatsApp inválido** (punto 3 arriba) — bloquea el envío de mensajes. Es lo
-  más urgente después de subir la v2.
+- **Token de WhatsApp sin permisos** (punto 3 arriba) — bloquea el envío de mensajes en los
+  24 nodos. Es lo más urgente después de subir la v2. El número está bien; hay que asignarle
+  la WABA al usuario del sistema y regenerar el token.
 - **Tokens de Chatwoot hardcodeados en 14 nodos**, en claro dentro del workflow. Hay dos
   tokens distintos contra la misma cuenta. Deberían pasar a una credencial *Header Auth* y
   **rotarse**, porque ya circularon en exports.
