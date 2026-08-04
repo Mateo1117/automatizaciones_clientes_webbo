@@ -228,19 +228,46 @@ Lo demás que se comprobó con ese mismo token:
 El token quedó asociado al negocio pero **la cuenta de WhatsApp nunca se le asignó como
 activo**. El objeto `696830786845937` existe; el token no puede verlo.
 
-**Esto no se corrigió porque hay que hacerlo en Meta Business:**
+**Resuelto.** El cliente generó un token con permisos y se validó contra la Graph API:
 
-1. business.facebook.com → Configuración del negocio → **Usuarios → Usuarios del sistema**
-2. Crear `n8n-conaring` (o usar el existente), rol Administrador
-3. **Agregar activos → Cuentas de WhatsApp** → la que tiene `+57 302 7560683` → *Control total*
-4. **Generar token** con `whatsapp_business_messaging` + `whatsapp_business_management`
-5. Confirmar el **Phone number ID** en developers.facebook.com → app → WhatsApp → *API Setup*
-   (los 24 nodos usan `696830786845937`)
-6. Pegar el token en n8n → Credentials → `WhatsApp conaring`
+```
+GET /v21.0/me/permissions
+whatsapp_business_messaging      granted
+whatsapp_business_management     granted
+whatsapp_business_manage_events  granted
+leads_retrieval, ads_management, pages_messaging, read_insights, ...
+```
 
-Un token de usuario del sistema no caduca, así que además deja de romperse cada 60 días.
-Una vez actualizada la credencial se puede revalidar desde n8n sin necesidad de entrar a Meta
-ni de compartir el token.
+Con ese token la cuenta y el número sí son visibles:
+
+| Consulta | Resultado |
+|---|---|
+| `GET /1503335814370202` | `ConaringTatiká` |
+| `GET /1503335814370202/phone_numbers` | `696830786845937` — `+57 302 7560683`, calidad `GREEN`, `CLOUD_API` |
+| `GET /696830786845937` | mismo número, `verified_name: ConaringTatiká` |
+
+**El `phoneNumberId` de los 24 nodos (`696830786845937`) siempre fue el correcto.** El único
+problema era el token: el anterior sólo tenía `public_profile`. No hubo que tocar ningún nodo.
+
+Se creó la credencial **`WhatsApp Conaring (token con permisos)`** (`LbUtavO3Z1MlRmsM`,
+`businessAccountId = 1503335814370202`) y los 24 nodos WhatsApp de la v2 se reapuntaron a
+ella. La credencial vieja `WhatsApp conaring` (`n9u0q4bVTSFGubcI`) sigue existiendo y la usa
+el workflow de producción; conviene borrarla una vez migrado.
+
+#### Pendientes de WhatsApp
+
+1. **El token es de usuario, no de usuario del sistema.** Los tokens `EAA...` de usuario
+   caducan (60 días los de larga duración) y se invalidan si la persona cambia la contraseña
+   o revoca la sesión. Cuando eso pase, los 24 nodos vuelven a fallar igual que hoy.
+   Reemplazarlo por uno de **usuario del sistema** (Configuración del negocio → Usuarios del
+   sistema → asignar la WABA como activo → generar token): esos no caducan.
+2. **El token circuló por un chat.** Hay que regenerarlo por higiene.
+3. **`code_verification_status: EXPIRED`** en el número. No bloquea el envío por Cloud API,
+   pero conviene revalidarlo desde el Administrador de WhatsApp.
+4. **Plantilla `seguimiento_conversacion` (en) está en `PENDING`**, y hay un nodo que la usa.
+   Ese envío va a fallar hasta que Meta la apruebe. De las 20 plantillas de la cuenta, 18
+   están `APPROVED`; las otras dos en `PENDING` son `seguimiento_conversacion` (en) y
+   `bienvenida_tatika` (es_CO) — esta última no la usa ningún nodo.
 
 ### 4. Paths de webhook con espacios → 404
 
@@ -295,9 +322,9 @@ Texto según el evento:
 
 Está en `docs/revision-flow-tatika-colina-conaring.md` con más detalle. Lo pendiente:
 
-- **Token de WhatsApp sin permisos** (punto 3 arriba) — bloquea el envío de mensajes en los
-  24 nodos. Es lo más urgente después de subir la v2. El número está bien; hay que asignarle
-  la WABA al usuario del sistema y regenerar el token.
+- **Token de WhatsApp**: ya funciona, pero es de usuario y caduca. Cambiarlo por uno de
+  usuario del sistema antes de que expire (punto 3 arriba).
+- **Plantilla `seguimiento_conversacion` (en) en PENDING** — un nodo la usa y va a fallar.
 - **Tokens de Chatwoot hardcodeados en 14 nodos**, en claro dentro del workflow. Hay dos
   tokens distintos contra la misma cuenta. Deberían pasar a una credencial *Header Auth* y
   **rotarse**, porque ya circularon en exports.
