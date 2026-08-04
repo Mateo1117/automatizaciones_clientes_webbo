@@ -1,0 +1,4 @@
+# Los JSON exportados de n8n llevan los tokens de Chatwoot en claro
+# (authentication: "none" + header api_access_token hardcodeado en 14 nodos).
+# No se versionan. La v2 se regenera con construir_v2.py desde el workflow vivo.
+*.json
