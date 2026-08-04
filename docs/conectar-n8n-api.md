@@ -46,35 +46,73 @@ tiene claim `exp` — **no caduca nunca**.
 
 ### 2. Permitir el dominio en el entorno de Claude Code
 
-1. Abrir **https://claude.ai/code**.
-2. Ícono de engranaje / **Settings** → **Environments**.
-3. Seleccionar el entorno que usa este repo (`automatizaciones_clientes_webbo`) → **Edit**.
-4. En **Network access**, cambiar de la política restringida a la opción que permite lista
-   propia de dominios (*custom / additional allowed domains*).
-5. Agregar el host, sin `https://` ni ruta:
+> ⚠️ **La configuración de entornos NO está en Settings.** No existe página de ajustes ni
+> URL directa para el selector — hay que abrirlo desde la pantalla de Claude Code.
+> (Documentación: *"There's no settings page or direct URL for the selector."*)
 
-   ```
-   flow.mcmasociados.tech
-   ```
+1. Abrir **https://claude.ai/code**.
+2. **Justo encima de la caja de mensajes** hay una fila con un **ícono de nube ☁️ que
+   muestra el nombre del entorno actual** (normalmente `Default`). Hacer clic ahí.
+3. Se abre un menú con secciones *Local*, *Cloud* y *Remote Control*. En **Cloud**:
+   - **Recomendado:** **Add cloud environment** — crea uno nuevo y deja intacto el `Default`.
+   - O bien: pasar el mouse sobre el entorno existente → **ícono de engranaje ⚙️** a la derecha.
+4. En el diálogo (campos: *Name*, *Network access*, *Environment variables*, *Setup script*):
+
+   | Campo | Valor |
+   |---|---|
+   | **Name** | `n8n-webbo` |
+   | **Network access** | cambiar de `Trusted` a **`Custom`** |
+   | **Allowed domains** | `flow.mcmasociados.tech` (uno por línea) |
 
    Si la instancia usa un puerto distinto de 443, incluirlo: `flow.mcmasociados.tech:5678`.
-6. **Save**.
+   Un `*.` inicial hace match con todos los subdominios.
 
-Referencia oficial: https://code.claude.com/docs/en/claude-code-on-the-web
+5. ✅ **Marcar "Also include default list of common package managers"**. Sin esa casilla
+   queda permitido *sólo* el dominio de la lista y se rompe todo lo demás (npm, apt,
+   GitHub, PyPI…).
+6. **Create environment** / **Save**.
 
-> El cambio de política aplica a **entornos nuevos o reiniciados**. La sesión actual sigue
-> con la política vieja: hay que abrir una sesión nueva después de guardar.
+Los cuatro niveles de `Network access` son:
 
-### 3. Pasar la key como variable de entorno (no por el chat)
-
-En la misma pantalla del entorno, sección **Environment variables**:
-
-| Nombre | Valor |
+| Nivel | Salida permitida |
 |---|---|
-| `N8N_API_KEY` | *(la key nueva del paso 1)* |
-| `N8N_BASE_URL` | `https://flow.mcmasociados.tech` |
+| `None` | Nada por la red de la sesión |
+| `Trusted` | *(default)* Sólo la lista de dominios de Anthropic (registries, GitHub, SDKs) |
+| `Full` | Cualquier dominio |
+| `Custom` | Lista propia, con o sin los defaults |
 
-Así la key no vuelve a quedar escrita en el historial del chat.
+Referencia oficial: https://code.claude.com/docs/en/cloud-environments
+
+> El cambio aplica a **sesiones nuevas**. La sesión en curso sigue con la política vieja.
+> Además, al cambiar los hosts permitidos se invalida la caché del entorno y el setup
+> script vuelve a correr en la siguiente sesión.
+
+### 3. Pasar la key como variable de entorno
+
+En el mismo diálogo, campo **Environment variables**, en formato `.env` (un `KEY=value`
+por línea):
+
+```
+N8N_BASE_URL=https://flow.mcmasociados.tech
+N8N_API_KEY=<la key nueva del paso 1>
+```
+
+> ⚠️ **Advertencia de la documentación:** los entornos cloud **no tienen almacén de
+> secretos**. Cualquiera que use el entorno puede leer las variables en claro
+> (*"don't add API keys or other credentials"*).
+>
+> En un entorno **personal** el riesgo práctico es bajo. En un entorno **compartido de
+> organización**, cualquier miembro la lee. Mitigación: usar la key con **expiración de 7
+> días y scopes mínimos** (paso 1) y borrarla al terminar.
+>
+> La alternativa es no guardarla y pegarla en cada sesión — pero entonces vuelve a quedar
+> en el historial del chat. Elegir según quién más tenga acceso al entorno.
+
+### 3b. Seleccionar el entorno al abrir la sesión
+
+Si se creó un entorno nuevo en vez de editar el `Default`, hay que **elegirlo en el mismo
+ícono de nube antes de mandar el primer mensaje** de la sesión. Si no, la sesión arranca en
+`Default` y el dominio sigue bloqueado.
 
 ### 4. Abrir sesión nueva y verificar
 
@@ -117,6 +155,15 @@ Ojo con `PUT /workflows/{id}`: **reemplaza** el workflow entero. Antes de escrib
 desactivarlo (`POST /workflows/{id}/deactivate`) y guardar una copia del JSON actual.
 
 ---
+
+## Si no aparece la opción
+
+- **No se ve el ícono de nube:** requiere haber pasado por el onboarding web de Claude Code.
+  La función está en *research preview* para planes **Pro, Max y Team**, y para **Enterprise**
+  con asientos premium o Chat + Claude Code.
+- **El entorno es compartido de la organización:** los entornos creados por un admin se
+  editan desde **Cloud environments** en https://claude.ai/admin-settings — hace falta rol
+  de Owner o Admin. Si no se tiene, hay que pedírselo al administrador.
 
 ## Si no se puede cambiar la política del entorno
 
