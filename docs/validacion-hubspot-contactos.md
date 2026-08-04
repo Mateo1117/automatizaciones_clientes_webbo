@@ -18,6 +18,9 @@ instancia real, con ejecuciones reales y con una prueba end-to-end.
 | 3 | Repetido → doble conversión | ❌ no existía en el workflow | ✅ |
 | 4 | Registrar en notas qué pasó, en cada paso | ❌ no existía en el workflow | ✅ |
 
+Adicionalmente se desbloqueó el envío de WhatsApp, que estaba caído en los 24 nodos por un
+token sin permisos (ver más abajo). Verificado con un envío real.
+
 ---
 
 ## Cómo se conecta a HubSpot
@@ -253,6 +256,23 @@ Se creó la credencial **`WhatsApp Conaring (token con permisos)`** (`LbUtavO3Z1
 `businessAccountId = 1503335814370202`) y los 24 nodos WhatsApp de la v2 se reapuntaron a
 ella. La credencial vieja `WhatsApp conaring` (`n9u0q4bVTSFGubcI`) sigue existiendo y la usa
 el workflow de producción; conviene borrarla una vez migrado.
+
+#### Envío real verificado
+
+Se envió la plantilla `hello_world` a `+57 310 244 8187` usando el **nodo real
+`n8n-nodes-base.whatsApp` v1** con la credencial nueva, es decir la misma combinación que
+usan los 24 nodos del workflow:
+
+```json
+{
+  "messaging_product": "whatsapp",
+  "contacts": [{ "input": "573102448187", "wa_id": "573102448187" }],
+  "messages": [{ "id": "wamid.HBgMNTczMTAyNDQ4MTg3…", "message_status": "accepted" }]
+}
+```
+
+Queda validada la cadena completa: credencial → `phoneNumberId 696830786845937` → envío de
+plantilla. El mensaje llegó al destinatario.
 
 #### Pendientes de WhatsApp
 
