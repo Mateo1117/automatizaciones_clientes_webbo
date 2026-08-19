@@ -153,6 +153,52 @@ y `availableInMCP`.
 el workflow los cuatro siguen ahí, `availableInMCP: true` incluido — el servidor hace merge, no
 reemplazo. No hubo que reactivar nada en *Settings → Instance-level MCP*.
 
+## ✅ Verificación en producción
+
+### Fix 1 — la conversación 1033 (Ramiro) es el caso completo
+
+| Hora UTC | Dirección | Mensaje | Estado |
+|---|---|---|---|
+| 02:46:08 | sale | `"Hola Ramiro"` — plantilla de bienvenida | ❌ `failed` — `131049` |
+| 02:51:11 | sale | seguimiento en texto libre (**antes del parche**) | ❌ `failed` — `Template not found` |
+| 03:24:09 | sale | **plantilla enviada por la rama nueva de ventana cerrada** | ✅ **`read`** |
+| 03:49:12 | **entra** | **`"Ver portafolio"`** | ✅ el lead respondió |
+
+Ramiro no había recibido **ni un solo mensaje** antes del parche: los dos intentos fallaron, cada
+uno por un motivo distinto. El primer mensaje que le llegó fue el de la rama nueva, lo leyó y
+respondió 25 minutos después.
+
+Esto confirma de paso las dos incógnitas que quedaban:
+
+- **`seguimiento_24h_webbo` sí está aprobada en Meta.** El mapa de plantillas del Code node
+  `Calcular ventana 24h` no necesita cambios.
+- **El `131049` no bloquea esta plantilla.** El tope es por destinatario y por categoría, no un
+  bloqueo general del número.
+
+Las dos ramas del IF quedaron ejercitadas con datos reales:
+
+| Hora | Lead | Ventana | Rama | Resultado |
+|---|---|---|---|---|
+| 03:21 | José | abierta (0.12 h) | texto libre | ✅ conversación de 7 mensajes en `read` |
+| 03:24 | Ramiro | cerrada (nunca escribió) | plantilla | ✅ `read` + respuesta del lead |
+
+### Fix 2 — dos casos reales en los primeros 15 minutos
+
+A las 03:09 y 03:10 un cliente envió imágenes. La descarga desde el S3 de Chatwoot devolvió
+**404 `NoSuchKey`** las dos veces, el IF tomó la rama falsa y llegó a `Mensaje final (imagen fallo)`:
+
+| Hora | Mensaje al cliente | Estado |
+|---|---|---|
+| 03:09:38 | *"José, no pude leer la imagen desde acá. Escríbeme po…"* | ✅ `read` |
+| 03:11:00 | *"José, sigo sin poder ver la imagen. Para no adivinar…"* | ✅ `read` |
+
+Antes del parche esos dos mensajes habrían entrado en el bucle infinito y el cliente no habría
+recibido nada, con Typebot colgado hasta su timeout.
+
+> **Hallazgo derivado:** el `data_url` de los adjuntos devuelve 404 `NoSuchKey` de forma
+> sistemática. La rama de imagen **nunca** llega a analizar nada: siempre cae al fallback. Es un
+> problema del lado de Solvot (URL firmada caducada o bucket mal resuelto), no de n8n.
+
 ## ⚠️ Segunda causa, independiente: Meta está bloqueando las plantillas (error 131049)
 
 Después de aplicar el parche apareció un error **distinto** en los envíos, y es el que ahora
