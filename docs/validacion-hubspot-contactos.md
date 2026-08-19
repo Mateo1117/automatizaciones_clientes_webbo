@@ -456,3 +456,95 @@ sobre una cuenta de WhatsApp distinta a `ConaringTatiká`. Los tres errores vist
 El `131049` no tiene arreglo por código: es un control antispam de Meta. La vía sostenible es
 que el contacto haya dado opt-in y responda —eso abre la ventana de 24 h y habilita texto
 libre—, además de cuidar la calificación de calidad del número.
+
+
+---
+
+## Tercera ronda — "inicia pero no sale el mensaje"
+
+Se analizaron 12 ejecuciones consecutivas del `Schedule Trigger` con datos completos.
+**Cero items llegaron a enviar un WhatsApp.** 10 de 12 terminaron en
+`No Operation, do nothing2`.
+
+### Recorrido real de una ejecución
+
+```
+Schedule Trigger → Buscar Contactos (1) → extraer leads (3 leads)
+  → Loop Over Items → Procesar Item Individual → HubSpot Obtener Detalles
+  → Procesar Info Detallada → 3. Format Lead Data1
+  → Switch2  (rutea por proyecto)
+       ├ salida 0 "Colina Del Viento" → Loop Over Items   ← DESCARTADO
+       └ salida 1 "Tatiká"            → Switch
+                                          ├ salida 1 "SIN CONTACTO"  → Loop  ← descartado
+                                          └ salida 4 "Aut Iniciada"  → NoOp  ← descartado
+```
+
+De 3 leads: 1 de Colina descartado, 1 ya `Contactado`, 1 ya `Iniciada`. Ninguno enviado.
+
+### Causa raíz: `Switch3` está huérfano
+
+`Switch3` es el **espejo exacto** de `Switch` pero para Colina del Viento — mismas 5 salidas
+(`SIN NUMERO`, `SIN CONTACTO`, `NO INICIADA`, `NO INICIADA 2`, `Aut Iniciada`) — y su rama
+`NO INICIADA` lleva a la cadena de envío de Colina:
+
+```
+Switch3 → Contact Exists? → HubSpot Obtener Detalles2 → Procesar Info Detallada3
+        → Crear Mensaje4 → Verificar Teléfono4 → ¿Teléfono Válido?4
+        → buscar contacto2 → crear contacto2 → crear conversacion2
+        → Send template (bienvenida_colina_del_viento)
+        → Wait2 → Crear y Actualizar Contacto12 (marca automatizacion = Iniciada)
+```
+
+Esa cadena está **completa y correcta**, incluido el marcado de `Iniciada` que evita
+reenvíos. Lo único que falta es la **conexión de entrada**: `Switch2` salida 0
+("Colina Del Viento") apunta hoy a `Loop Over Items` en vez de a `Switch3`.
+
+La posición de los nodos confirma la intención: `Switch2` en `[-6304,-4704]`,
+`Switch` (Tatiká) en `[-5968,-4704]` y `Switch3` en `[-5824,-4048]`, justo debajo.
+
+**La corrección es una sola conexión: `Switch2` salida 0 → `Switch3`.**
+
+### ⚠️ Por qué NO se aplicó todavía
+
+Conectarla despierta una rama dormida sobre una base de datos grande. Conteo real en HubSpot:
+
+| Segmento | Contactos |
+|---|---|
+| Colina Del Viento, total | 3.314 |
+| Colina Del Viento **sin `automatizacion`** (entrarían al envío) | **2.960** |
+| Colina Del Viento ya en `Iniciada` | 105 |
+| Tatika sin `automatizacion` | 1.070 |
+| Tatika ya en `Iniciada` | 5 |
+
+Al conectarla, en el siguiente ciclo de 15 minutos entrarían **2.960 contactos** a recibir
+`bienvenida_colina_del_viento`. Aunque el `Loop Over Items` los procesa por lotes, es un
+envío masivo de plantillas MARKETING a una base fría — exactamente el patrón que dispara el
+error `131049` de Meta y que degrada la calificación de calidad del número.
+
+**Decisión: no se conecta sin aprobación explícita del cliente.** Antes conviene:
+
+1. Confirmar que los 2.960 tienen opt-in y que se les quiere escribir.
+2. Definir un ritmo (por ejemplo filtrar por `createdate` de los últimos N días, o subir el
+   intervalo del `Schedule Trigger`) para no mandar todo de una vez.
+3. Recién entonces conectar `Switch2` salida 0 → `Switch3`.
+
+### Sobre "inicia pero no sale el mensaje"
+
+En ambas ramas el marcado `automatizacion = Iniciada` ocurre **después** del envío
+(`WhatsApp → Wait → Crear y Actualizar Contacto8` en Tatiká, `Send template → Wait2 →
+Crear y Actualizar Contacto12` en Colina). Ese orden es el correcto: si el envío falla, el
+contacto no queda marcado y se reintenta en el siguiente ciclo.
+
+Por lo tanto, un contacto en `Iniciada` **sí tuvo un envío aceptado por Meta**. Si aun así el
+cliente no recibió nada, la pérdida ocurre después de la API y las causas son las de la
+sección de Chatwoot: `131049` (Meta descarta el mensaje), plantilla no aprobada, o ventana de
+24 h. Los 105 contactos de Colina en `Iniciada` no pueden venir de esta rama —está
+desconectada—, así que vienen de los webhooks o de la versión anterior del flujo.
+
+---
+
+## Instancia n8n distinta: "WEBBO - Bot completo CORREGIDO"
+
+Ese workflow **no está** en `flow.mcmasociados.tech`. Se listaron los 20 workflows de la
+instancia y no aparece ninguno con ese nombre. Vive en otra n8n (por la interfaz, n8n Cloud).
+Para revisarlo hace falta su URL y una API key propia.
