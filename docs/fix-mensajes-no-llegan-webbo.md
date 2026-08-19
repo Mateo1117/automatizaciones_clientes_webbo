@@ -153,6 +153,47 @@ y `availableInMCP`.
 el workflow los cuatro siguen ahí, `availableInMCP: true` incluido — el servidor hace merge, no
 reemplazo. No hubo que reactivar nada en *Settings → Instance-level MCP*.
 
+## ⚠️ Segunda causa, independiente: Meta está bloqueando las plantillas (error 131049)
+
+Después de aplicar el parche apareció un error **distinto** en los envíos, y es el que ahora
+impide que lleguen los mensajes a los leads nuevos:
+
+```
+131049: This message was not delivered to maintain healthy ecosystem engagement.
+```
+
+Inventario de todos los envíos fallidos observados:
+
+| Hora UTC | Conv. | Mensaje | Error |
+|---|---|---|---|
+| 08-18 23:54 | 1027 | seguimiento (texto libre) | `Template not found` |
+| 08-19 01:42 | 1032 | seguimiento (texto libre) | `Template not found` |
+| 08-19 02:46 | 1033 | **`"Hola Ramiro"` — plantilla de bienvenida** | **`131049`** |
+| 08-19 02:51 | 1033 | seguimiento (texto libre) | `Template not found` |
+| 08-19 03:25 | 1035 | **`"Hola Jhon"` — plantilla de bienvenida** | **`131049`** |
+
+Los tres `Template not found` son la causa que corrige este parche. Los dos `131049` son otra
+cosa: **Meta está descartando las plantillas de bienvenida**, que hasta las 01:36 sí se
+entregaban (`"Hola Héctor"` quedó en `read`). Y son los dos casos más recientes.
+
+`131049` es el tope de frecuencia por usuario que Meta aplica a las plantillas de *marketing*.
+Salta cuando el destinatario ya recibió demasiados mensajes de marketing o cuando la calidad del
+número se degrada. Aunque el flujo declara `"category": "UTILITY"` en `remarketing_webbo`, la
+categoría real la asigna Meta del lado del servidor.
+
+**Esto no se arregla en n8n.** Y la causa de fondo es justamente lo que hacía el flujo: mandar
+seguimientos a los 5 y 30 minutos a leads que nunca abrieron la conversación. Aunque esos
+mensajes fallaran, los intentos cuentan para la reputación del número.
+
+Qué revisar, en orden:
+
+1. **Calidad del número** en WhatsApp Manager → *Insights* → estado de calidad y límite de
+   mensajería. Si está en amarillo o rojo, hay que bajar el volumen y esperar a que se recupere.
+2. **Categoría real de `remarketing_webbo`** en WhatsApp Manager → *Plantillas*. Si Meta la
+   clasificó como MARKETING, está sujeta al tope por usuario.
+3. **Espaciar la secuencia.** Un seguimiento a los 5 minutos de una plantilla que el lead ni
+   siquiera ha abierto es justo el patrón que dispara el 131049.
+
 ## Lo que este parche **no** arregla
 
 Sigue pendiente de la revisión general (`docs/revision-bot-webbo.md`):
