@@ -133,9 +133,12 @@ hizo falta tocar código.
 
 ---
 
-## Nota sobre el API pública de n8n
+## Aplicación — notas sobre el API pública de n8n
 
-`PUT /api/v1/workflows/{id}` rechaza el `settings` actual del workflow:
+El parche se aplicó con `PUT /api/v1/workflows/TX3A1wgpXHiLKwID` (HTTP 200, workflow activo,
+219 nodos). Dos cosas que conviene saber para la próxima vez:
+
+**El `settings` completo es rechazado.** Mandar el objeto tal como lo devuelve `GET` produce:
 
 ```
 HTTP 400 — request/body/settings must NOT have additional properties
@@ -144,16 +147,11 @@ HTTP 400 — request/body/settings must NOT have additional properties
 El esquema de la API pública solo admite `executionOrder`, `timezone`, `errorWorkflow`,
 `executionTimeout`, `saveExecutionProgress`, `saveManualExecutions`, `saveDataErrorExecution` y
 `saveDataSuccessExecution`. El workflow tiene además `binaryMode`, `timeSavedMode`, `callerPolicy`
-y `availableInMCP`, que la API no acepta.
+y `availableInMCP`.
 
-Consecuencia: al escribir por API hay que mandar solo las claves admitidas, y las otras cuatro se
-pierden. De esas, la única con efecto real es **`availableInMCP: true`** (el workflow deja de estar
-expuesto como herramienta MCP; se vuelve a activar desde la UI). `callerPolicy:
-workflowsFromSameOwner` es el valor por defecto de n8n y `timeSavedMode` es cosmético.
-
-Importar el JSON desde la UI de n8n evita este efecto por completo.
-
----
+**Pero n8n no los borra.** Se envió `settings` solo con `executionOrder` y `timezone`, y al releer
+el workflow los cuatro siguen ahí, `availableInMCP: true` incluido — el servidor hace merge, no
+reemplazo. No hubo que reactivar nada en *Settings → Instance-level MCP*.
 
 ## Lo que este parche **no** arregla
 
