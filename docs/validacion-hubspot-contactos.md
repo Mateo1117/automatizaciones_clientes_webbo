@@ -388,3 +388,71 @@ curl -s -X POST -H "X-N8N-API-KEY: $N8N_API_KEY" \
   -H "Content-Type: application/json" --data @wf-v2.json \
   "$N8N_BASE_URL/api/v1/workflows"
 ```
+
+
+---
+
+## Segunda ronda — errores con la v2 ya activa
+
+La v2 se activó y producción (`m9mqIWluJay9qOWs`) quedó desactivada. Con la v2 corriendo
+aparecieron 11 ejecuciones con error. Causas, todas distintas:
+
+### Validación sistemática de las 24 plantillas
+
+Se comparó, nodo por nodo, la plantilla configurada contra su definición real en Meta
+(nombre, idioma, estado y número de variables `{{n}}` en el BODY). **22 de 24 correctos.**
+Los dos que fallaban:
+
+| Nodo | Plantilla | Params enviados | Esperados | Estado |
+|---|---|---|---|---|
+| `WhatsApp Business Cloud21` | `seguimiento_4_colina_del_viento` (es_CO) | 0 | **1** | APPROVED |
+| `WhatsApp Business Cloud3` | `seguimiento_conversacion` (en) | 0 | 0 | **PENDING** |
+
+**Cloud21 — corregido.** El body de la plantilla empieza con `Hola *{{1}}* 😉…` pero el nodo
+tenía `components: null`. Meta respondía *"Number of parameters does not match the expected
+number of params"*. Se le puso `{{ $json.nombre }}`, igual que sus plantillas hermanas
+`seguimiento_1` y `seguimiento_2`. Verificado que `Separar Citas16` sí entrega `nombre`.
+
+**Cloud3 — no se puede corregir desde n8n.** La plantilla `seguimiento_conversacion` (en)
+sigue en `PENDING` en Meta, y por eso devuelve
+`(#132001) Template name does not exist in the translation`. Hay que esperar la aprobación,
+o apuntar el nodo a una plantilla equivalente ya aprobada.
+
+### Email vacío tumbaba la ejecución completa — corregido
+
+Tres ejecuciones murieron en `Crear y Actualizar Contacto4/7/14` con `404 - ""`. El webhook
+llegó así:
+
+```json
+{ "hs_lead_status": "Contactado", "email": "", "phone_number": "+573157437402" }
+```
+
+Con `email` vacío, el nodo HubSpot v1 arma la URL
+`/contacts/v1/contact/createOrUpdate/email//` y HubSpot devuelve 404. Como esos nodos no
+tenían manejo de error, **abortaban la ejecución entera y el cliente nunca recibía su
+respuesta de WhatsApp**.
+
+Sin email no hay forma de identificar el contacto, así que lo correcto es saltarse la
+actualización y dejar que el resto del flujo siga. Se puso
+`onError: continueRegularOutput` en los 21 nodos `Crear y Actualizar Contacto*`.
+
+> Esto trata el síntoma. La causa está aguas arriba: quien llama a
+> `respuesta_cliente_tatika` está mandando `email` vacío. Vale la pena revisar por qué.
+
+---
+
+## Los errores del Chatwoot de Webbo NO son de este workflow
+
+Se buscó en los **20 workflows** de la instancia y **ninguno contiene el texto de esos
+mensajes** ni la palabra "Webbo". Salen de Chatwoot directamente (envío manual o campaña),
+sobre una cuenta de WhatsApp distinta a `ConaringTatiká`. Los tres errores vistos:
+
+| Error | Qué significa | Solución |
+|---|---|---|
+| `Template not found or invalid template name` | El nombre o el **idioma** de la plantilla no coincide con ninguna aprobada en esa WABA. Casi siempre es el idioma: la plantilla existe en `es_CO` y se envía como `es`. | Verificar nombre + idioma exactos en el Administrador de WhatsApp de **esa** cuenta |
+| `131049: This message was not delivered to maintain healthy ecosystem engagement` | Meta **descartó** el mensaje a propósito. Es el límite por-usuario de plantillas **MARKETING**: se aplica cuando el destinatario ya recibió demasiadas, no interactúa, o la calidad del número bajó. No es un fallo técnico. | Bajar volumen de marketing, usar categoría `UTILITY` donde corresponda, y priorizar contactos que ya respondieron |
+| *"Sólo puede responder usando una plantilla — ventana de 24 horas"* | Fuera de las 24 h desde el último mensaje del cliente sólo se pueden enviar plantillas aprobadas, no texto libre. | Es el comportamiento normal de la API |
+
+El `131049` no tiene arreglo por código: es un control antispam de Meta. La vía sostenible es
+que el contacto haya dado opt-in y responda —eso abre la ventana de 24 h y habilita texto
+libre—, además de cuidar la calificación de calidad del número.

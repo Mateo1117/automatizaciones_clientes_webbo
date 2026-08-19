@@ -412,6 +412,35 @@ return {
             reint += 1
     cambios.append(f"retryOnFail x3 en {reint} nodos HubSpot (un 429 ya no tumba la ejecucion completa)")
 
+    # =========================================================
+    # D. FALLAS DETECTADAS CON LA v2 YA EN PRODUCCION
+    # =========================================================
+
+    # D1 -- La plantilla seguimiento_4_colina_del_viento tiene {{1}} en el body,
+    #       pero el nodo mandaba components:null => Meta responde
+    #       "Number of parameters does not match the expected number of params".
+    #       Las plantillas hermanas (seguimiento_1 y _2) usan $json.nombre.
+    n = node(wf, 'WhatsApp Business Cloud21')
+    n['parameters']['components'] = {
+        "component": [{"bodyParameters": {"parameter": [{"text": "={{ $json.nombre }}"}]}}]
+    }
+    cambios.append("WhatsApp Business Cloud21: se agrega el parametro {{1}} = $json.nombre "
+                   "que exige la plantilla seguimiento_4_colina_del_viento")
+
+    # D2 -- Si el webhook llega con email vacio, el nodo HubSpot v1 arma la URL
+    #       .../contact/createOrUpdate/email//  y HubSpot devuelve 404. Eso ABORTA
+    #       la ejecucion completa y el cliente nunca recibe su respuesta de WhatsApp.
+    #       Sin email no hay como identificar el contacto, asi que lo correcto es
+    #       saltarse la actualizacion y dejar que el resto del flujo continue.
+    n_hs = 0
+    for nd in wf['nodes']:
+        if nd['name'].startswith('Crear y Actualizar Contacto') and not nd.get('disabled'):
+            nd['onError'] = 'continueRegularOutput'
+            nd['alwaysOutputData'] = True
+            n_hs += 1
+    cambios.append(f"{n_hs} nodos 'Crear y Actualizar Contacto': onError=continueRegularOutput, "
+                   "un email vacio ya no tumba la ejecucion entera")
+
     # -------- salida
     # La API publica de n8n solo acepta este subconjunto de settings.
     PERMITIDOS = {'saveExecutionProgress', 'saveManualExecutions', 'saveDataErrorExecution',
