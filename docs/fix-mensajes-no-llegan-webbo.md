@@ -1,0 +1,168 @@
+# Corrección — "los mensajes no llegan a los clientes" (bot de Webbo)
+
+Workflow `TX3A1wgpXHiLKwID` · instancia `n8n-n8n.qhwbfx.easypanel.host` · 2026-08-19
+
+---
+
+## El motivo
+
+Los mensajes de seguimiento **sí se crean en Solvot pero WhatsApp los rechaza**. El error, leído
+del historial real de las conversaciones:
+
+```
+status: failed
+content_attributes.external_error: "Template not found or invalid template name"
+```
+
+### Evidencia — conversación 1032 (Héctor Castro)
+
+| Hora UTC | Mensaje | Nodo que lo envió | Estado |
+|---|---|---|---|
+| 01:36:27 | `"Hola Héctor"` | `Enviar plantilla1` (con `template_params`) | ✅ `read` |
+| 01:42:11 | `"Héctor, para aterrizarlo rápido…"` | `Enviar mensaje contextual` (texto libre) | ❌ **`failed`** — `Template not found or invalid template name` |
+| 01:58:27 | `"Sí, quiero saber más"` (entrante del cliente) | — | — |
+
+Mismo patrón en la conversación 1027 (David), 23:54 → `failed` con el mismo error. Otras 19
+salidas del bot quedaron en `progress` (nunca confirmadas por el proveedor), todas del mismo nodo.
+
+En contraste, la conversación 1026 (Deisy, que **escribió primero**) tiene sus 10 respuestas en
+`read`. Y las plantillas de bienvenida, que sí llevan `template_params`, también llegan.
+
+### La causa
+
+`Enviar mensaje contextual` publica el texto generado por la IA sin declarar plantilla:
+
+```json
+{ "content": "<texto de la IA>", "message_type": "outgoing" }
+```
+
+La **ventana de servicio de 24 h de WhatsApp solo la abre un mensaje entrante del cliente** —
+enviar una plantilla no la abre. Con la ventana cerrada, Chatwoot no puede mandar texto libre:
+intenta enviarlo como plantilla, busca una aprobada que coincida con el contenido, y como el
+texto lo genera la IA distinto cada vez no existe ninguna. De ahí
+`Template not found or invalid template name`.
+
+Y por definición **todo lead que está en la cola de seguimiento en las etapas `reintento_5m`,
+`reintento_30m` y `reintento_12h` es un lead que todavía no ha respondido** → la ventana siempre
+está cerrada → **ninguno de esos mensajes llega nunca**.
+
+n8n no se entera porque Chatwoot devuelve **HTTP 200** al crear el mensaje; el fallo ocurre
+después, de forma asíncrona, en el proveedor. El nodo tiene `onError: continueRegularOutput` y
+pasa directo a `CRM: avanzar etapa`, así que el CRM registra el seguimiento como hecho.
+
+---
+
+## La corrección
+
+### Fix 1 — Respetar la ventana de 24 h (3 nodos nuevos + 1 reconexión)
+
+```
+Que reintento[contextual]
+  └─▶ Mensajes de la conversacion   (GET .../conversations/{id}/messages)
+        └─▶ Calcular ventana 24h    (Code)
+              └─▶ Ventana 24h abierta?  (IF)
+                    ├─ true  ─▶ Generar mensaje contextual ─▶ Enviar mensaje contextual
+                    └─ false ─▶ Enviar plantilla (ventana cerrada) ─▶ CRM: avanzar etapa
+```
+
+`Calcular ventana 24h` busca el último mensaje **entrante** (`message_type === 0`) y considera la
+ventana abierta si tiene menos de 24 h:
+
+```js
+const ahora = Math.floor(Date.now() / 1000);
+let ultimoEntrante = 0;
+for (const m of msgs) {
+  if (m && m.message_type === 0 && Number(m.created_at) > ultimoEntrante) {
+    ultimoEntrante = Number(m.created_at);
+  }
+}
+const ventana_abierta = ultimoEntrante > 0 && (ahora - ultimoEntrante) < 24 * 60 * 60;
+```
+
+El mismo nodo resuelve qué plantilla usar cuando la ventana está cerrada, en un mapa editable
+arriba del código:
+
+```js
+const PLANTILLA_POR_ETAPA = {
+  reintento_5m:  'seguimiento_24h_webbo',
+  reintento_30m: 'seguimiento_24h_webbo',
+  reintento_12h: 'seguimiento_24h_webbo',
+};
+```
+
+> ⚠️ **Pendiente de confirmar:** la única plantilla verificada como aprobada y entregada es
+> `remarketing_webbo` (las bienvenidas llegan en estado `read`). `seguimiento_24h_webbo` y
+> `cierre_48h_webbo` están en el flujo desde antes pero **no hay ninguna entrega confirmada** con
+> ellas. Si no existen en Meta, los envíos fallarán con el mismo error. Verificar en
+> Solvot → Inbox 131 → plantillas, y ajustar el mapa de arriba.
+
+### Fix 2 — Reconectar los fallbacks de audio/imagen y romper el bucle infinito
+
+Antes, cuando fallaba la descarga del adjunto:
+
+```
+Audio se descargo?[false] ─▶ Obtener mensajes Solvot9 ─▶ audio ─▶ Descargar (1) ─▶ … ─▶ Audio se descargo?
+```
+
+Un ciclo cerrado sin contador ni salida. Como el webhook está en `responseMode: responseNode`,
+**Typebot se quedaba colgado y el cliente no recibía nada**. Los nodos de rescate
+`Mensaje final (audio fallo)` y `Mensaje final (imagen fallo)` ya existían con el texto escrito,
+pero estaban sueltos, sin entrada ni salida.
+
+Ahora:
+
+```
+Audio se descargo?[false]  ─▶ Mensaje final (audio fallo)  ─▶ Obtener contacto
+Imagen se descargo?[false] ─▶ Mensaje final (imagen fallo) ─▶ Obtener contacto
+```
+
+`Combinar contacto y mensaje` ya contemplaba ambos nodos en su cadena de fallback, así que no
+hizo falta tocar código.
+
+---
+
+## Verificación del parche antes de aplicar
+
+| Comprobación | Resultado |
+|---|---|
+| Conexiones a nodos inexistentes | 0 |
+| Ciclo en la rama de audio | eliminado |
+| Ciclo en la rama de imagen | eliminado |
+| Nodos alcanzables desde triggers activos | 74 → 79 |
+| Nodos que quedan huérfanos | 1 (`Obtener mensajes Solvot10`, solo lo alimentaba el bucle) |
+
+---
+
+## Nota sobre el API pública de n8n
+
+`PUT /api/v1/workflows/{id}` rechaza el `settings` actual del workflow:
+
+```
+HTTP 400 — request/body/settings must NOT have additional properties
+```
+
+El esquema de la API pública solo admite `executionOrder`, `timezone`, `errorWorkflow`,
+`executionTimeout`, `saveExecutionProgress`, `saveManualExecutions`, `saveDataErrorExecution` y
+`saveDataSuccessExecution`. El workflow tiene además `binaryMode`, `timeSavedMode`, `callerPolicy`
+y `availableInMCP`, que la API no acepta.
+
+Consecuencia: al escribir por API hay que mandar solo las claves admitidas, y las otras cuatro se
+pierden. De esas, la única con efecto real es **`availableInMCP: true`** (el workflow deja de estar
+expuesto como herramienta MCP; se vuelve a activar desde la UI). `callerPolicy:
+workflowsFromSameOwner` es el valor por defecto de n8n y `timeSavedMode` es cosmético.
+
+Importar el JSON desde la UI de n8n evita este efecto por completo.
+
+---
+
+## Lo que este parche **no** arregla
+
+Sigue pendiente de la revisión general (`docs/revision-bot-webbo.md`):
+
+- **B2** — el seguimiento reencola leads que ya respondieron (Héctor recibió `reintento_5m` dos
+  veces). Se arregla en la función `leads-seguimiento` de Supabase.
+- **A8** — `CRM: avanzar etapa` marca la etapa como hecha aunque el envío falle. La ventana de 24 h
+  era la causa de fondo, pero el patrón de "HTTP 200 ≠ entregado" sigue ahí: conviene releer el
+  estado del mensaje antes de avanzar.
+- **B3/B4** — tokens en claro y webhooks sin autenticación.
+- **B5** — los 141 nodos muertos y los paths de webhook duplicados.
