@@ -15,6 +15,20 @@ Proyecto: `solvot_mcm_salud` · FreePBX 17 / Asterisk 22 (solo PJSIP, `chan_sip`
 
 ## 1. Extensión 610 «Supervisión»
 
+### Antes de crearla: comprueba si ya existe
+
+`IVR_LA_MESA.md` §2 dice que los pasos están «probados al crear la 610 de Funza», en
+pasado y fechado 5/8/2026: según el repo **la 610 ya fue creada**. Verifícalo primero:
+
+```bash
+asterisk -rx "pjsip show endpoint 610"
+```
+
+Si devuelve un endpoint, **no la recrees**: volver a crearla por la GUI le cambia el secret
+y deja muda la escucha de Funza que ya esté funcionando. En ese caso el trabajo se reduce a
+confirmar que sigue fuera de todas las colas y que el secret del PBX coincide con el
+declarado en `PBX_EXTENSIONS_SUPERVISION`. Solo si no existe, sigue con lo de abajo.
+
 **Applications → Extensions → Add Extension → Add New SIP (chan_pjsip)**
 
 | Pestaña | Campo | Valor |
@@ -26,6 +40,22 @@ Proyecto: `solvot_mcm_salud` · FreePBX 17 / Asterisk 22 (solo PJSIP, `chan_sip`
 | Advanced | **Enable WebRTC** | **Yes** |
 | Advanced | Max Contacts | `2` |
 | Voicemail | Enabled | **No** |
+
+### La convención completa (los tres hospitales)
+
+La central es **compartida**. Cada hospital tiene su propia extensión de supervisión, y es
+justo eso lo que impide que un supervisor oiga a los pacientes de otro:
+
+| Hospital | Agentes | Cola | Supervisión |
+|---|---|---|---|
+| Madrid | 501–508 | 700 | `510` (pendiente) |
+| Funza | 601–604 | 701 | `610` |
+| La Mesa | 401–404 | 702 | `410` (pendiente) |
+
+Fuente: tabla de `IVR_LA_MESA.md` (líneas 10-11). Ojo: la tabla de convención de
+`EXTENSION_610.md` está **incompleta** — omite La Mesa y nombra a Madrid solo como «el del
+rango 500». Este documento trata la de `IVR_LA_MESA.md` como la buena.
+
 
 **WebRTC es obligatorio**, no opcional: el softphone del portal se registra por
 `wss://pbx.mcmsolutions.com.co:8089/ws`, y ese interruptor es el que activa DTLS,
@@ -64,6 +94,12 @@ alguna y hay que sacarla antes de entregarla. Y que la 701 siga con solo 601-604
 ```bash
 asterisk -rx "queue show 701"
 ```
+
+> **No lo verifiques por la GUI.** Las colas de esta central **no están en FreePBX**: viven
+> en `/etc/asterisk/queues_custom.conf`, igual la 700 que la 701 y la 702
+> (`IVR_LA_MESA.md` §3). Applications → Queues no las muestra, así que `queue show` por
+> consola es la única comprobación válida. Una versión anterior de este documento mandaba
+> mirar Static Agents en la GUI: era incorrecto.
 
 ### Declararla en el bot
 
