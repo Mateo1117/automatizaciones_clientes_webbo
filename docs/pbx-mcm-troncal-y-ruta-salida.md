@@ -85,7 +85,7 @@ PBX_EXTENSIONS_SUPERVISION={"610":"<el secret de la 610>"}
 
 | Pestaña | Campo | Valor |
 |---|---|---|
-| General | Trunk Name | ver nota de nombre |
+| General | Trunk Name | `gw_co_out` |
 | pjsip Settings → General | Username | `101` |
 | pjsip Settings → General | Secret | `73942850d11564862de74cddace36452` |
 | pjsip Settings → General | Authentication | `Outbound` |
@@ -93,20 +93,21 @@ PBX_EXTENSIONS_SUPERVISION={"610":"<el secret de la 610>"}
 | pjsip Settings → General | SIP Server | `190.24.47.209` |
 | pjsip Settings → General | SIP Server Port | `5060` |
 
-### Nota de nombre — decidir antes de crearla
+### Por qué `gw_co_out` y no `goip`
 
-`telefonia-service` origina por AMI contra el troncal que le diga su variable `TRUNK_OUT`,
-hoy con valor `goip` (`apps/telefonia/.env.example`). Pero ese servicio corre sobre el
-**Issabel** del hospital (que usa `chan_sip`), que es una máquina distinta de este FreePBX
-17. Así que hay dos opciones y es decisión tuya:
+El troncal `goip` que aparece en la documentación **no es este gateway**: vive en el
+**Issabel** (CentOS 7, `chan_sip`) del hospital del rango 500 —el ejemplo de click-to-call
+de `README_DESPLIEGUE.md` usa la extensión `501`—, es una GSM box local y la propia doc lo
+marca como **temporal** a la espera de `LIWA_OUT`. Este otro es un gateway SIP en IP
+pública con cuenta `101` y secret, sobre el FreePBX 17 de Funza.
 
-- Nombrar la troncal **`goip`** aquí también → si algún día `telefonia-service` apunta a
-  esta central, `TRUNK_OUT` ya calza sin tocar nada.
-- Nombrarla **`gateway_mcm`** → más explícito, pero habrá que cambiar `TRUNK_OUT` el día
-  que se migre.
+Reutilizar el nombre dejaría dos troncales homónimas en dos servidores distintos apuntando
+a hardware distinto, y eso se paga al leer CDRs. `gw_co_out` dice qué es (gateway, Colombia,
+salida), no asume un proveedor que no está confirmado, no choca con `goip` ni con el
+reservado `LIWA_OUT`, y no queda obsoleto si cambia la IP.
 
-No la nombres `LIWA_OUT`: ese nombre ya está reservado en la documentación del proyecto
-para el troncal definitivo que aún no existe.
+Consecuencia operativa: `TRUNK_OUT` de `telefonia-service` **se queda como está** (`goip`).
+Ese servicio sigue marcando por su Issabel; no se toca nada suyo con este cambio.
 
 ### Registro: None vs Outbound
 
@@ -138,7 +139,7 @@ Criterio para decidir: si con `None` las llamadas salen, está bien. Si el gatew
 | Campo | Valor |
 |---|---|
 | Route Name | `salientes_co` |
-| Trunk Sequence | la troncal del paso 2 |
+| Trunk Sequence | `gw_co_out` |
 
 Dial Patterns (match pattern, sin prepend ni prefix):
 
