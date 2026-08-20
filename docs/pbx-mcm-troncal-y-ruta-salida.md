@@ -15,19 +15,37 @@ Proyecto: `solvot_mcm_salud` · FreePBX 17 / Asterisk 22 (solo PJSIP, `chan_sip`
 
 ## 1. Extensión 610 «Supervisión»
 
-### Antes de crearla: comprueba si ya existe
+### La 610 YA EXISTE — verificado el 20/8/2026
 
-`IVR_LA_MESA.md` §2 dice que los pasos están «probados al crear la 610 de Funza», en
-pasado y fechado 5/8/2026: según el repo **la 610 ya fue creada**. Verifícalo primero:
+`pjsip show endpoint 610` en el PBX devuelve el endpoint, así que **no hay que
+crearla**: recrearla por la GUI le cambiaría el secret y dejaría muda la escucha de Funza.
+Lo que queda es cerrar tres desviaciones respecto a esta misma spec.
+
+Correcto en la central: `webrtc: yes` (con `media_encryption: dtls`, `use_avpf: true`,
+`rtcp_mux: true`, `ice_support: true`), `language: es_419`,
+`callerid: "Supervision Funza" <610>`, `context: from-internal`.
+
+| # | Observado | Esperado | Efecto |
+|---|---|---|---|
+| 1 | `Aor: 610` → `MaxContact 1` | Max Contacts `2` | Un segundo registro desaloja al primero: el softphone del portal y un móvil no conviven |
+| 2 | `mailboxes: 610@device` | Voicemail `No` | Apunta a voicemail activo. Si no contestan la escucha debe sonar y acabarse, no caer en buzón. `voicemail_extension` está vacío, así que no es concluyente: confirmar en la GUI |
+| 3 | `direct_media: true` | `no` en WebRTC | Un navegador con DTLS-SRTP no hace media directa con un endpoint no-WebRTC: candidato a audio en un solo sentido. Para la escucha probablemente no muerde (el 610 se puentea con un canal *snoop*, interno de Asterisk, que no admite media directa), pero sí para llamadas normales desde o hacia el 610 |
+
+`Unavailable` y `0 of inf`, sin línea `Contact`, **no es un fallo**: no hay nada registrado en
+ese momento. Es lo esperado si nadie tiene abierto el softphone del portal.
+
+Queda por hacer en el punto 1:
 
 ```bash
-asterisk -rx "pjsip show endpoint 610"
+asterisk -rx "queue show" | grep -c 610     # debe dar 0
 ```
 
-Si devuelve un endpoint, **no la recrees**: volver a crearla por la GUI le cambia el secret
-y deja muda la escucha de Funza que ya esté funcionando. En ese caso el trabajo se reduce a
-confirmar que sigue fuera de todas las colas y que el secret del PBX coincide con el
-declarado en `PBX_EXTENSIONS_SUPERVISION`. Solo si no existe, sigue con lo de abajo.
+Y sacar el secret de **Applications → Extensions → 610 → Secret** para
+`PBX_EXTENSIONS_SUPERVISION` en EasyPanel. No hace falta que salga de la central ni del
+panel.
+
+<details>
+<summary>Los pasos de creación, por si hiciera falta rehacerla (o para la 410 y la 510)</summary>
 
 **Applications → Extensions → Add Extension → Add New SIP (chan_pjsip)**
 
@@ -63,6 +81,8 @@ transporte `wss`, cifrado de medios, AVPF, ICE y `rtcp_mux`. Sin él la 610 se c
 portal no puede registrarla. (Esto no estaba en la primera versión de este documento.)
 
 Luego **Submit → Apply Config**.
+
+</details>
 
 **Secret propuesto** (32 chars, aleatorio — o genera otro con `openssl rand -base64 24`):
 
