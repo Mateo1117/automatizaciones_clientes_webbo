@@ -1,52 +1,81 @@
 # MCM — Extensión 610, troncal PJSIP al gateway y ruta de salida
 
-**Estado: NO APLICADO.** Esta configuración está pendiente de ejecutarse contra el PBX
-`157.245.244.48`. Ver "Por qué no se aplicó" al final. Nada de lo descrito aquí ha sido
-verificado contra el servidor.
+**Estado: NO APLICADO.** Pendiente de ejecutarse contra el PBX
+`pbx.mcmsolutions.com.co` (`157.245.244.48`). Nada aquí ha sido verificado contra el
+servidor. Ver "Por qué no se aplicó" al final.
 
-Proyecto: `solvot_mcm_salud` · PBX: FreePBX sobre Asterisk 22 (solo PJSIP, `chan_sip` no existe).
+Proyecto: `solvot_mcm_salud` · FreePBX 17 / Asterisk 22 (solo PJSIP, `chan_sip` no existe).
+
+> **La fuente de verdad de la extensión 610 es
+> `apps/bot/deploy/pbx/EXTENSION_610.md` en el repo `solvot_mcm_salud`.** Este documento
+> se alinea con ella y añade lo que allí no está: la troncal al gateway y la ruta de
+> salida. Si algo discrepa, manda la del repo del proyecto.
 
 ---
 
 ## 1. Extensión 610 «Supervisión»
 
-Crear desde la GUI: **Applications → Extensions → Add New → Add New PJSIP Extension**.
+**Applications → Extensions → Add Extension → Add New SIP (chan_pjsip)**
 
-| Campo | Valor |
-|---|---|
-| User Extension | `610` |
-| Display Name | `Supervisión` |
-| Secret | ver abajo |
-| Outbound CID | (vacío / heredar) |
+| Pestaña | Campo | Valor |
+|---|---|---|
+| General | User Extension | `610` |
+| General | Display Name | `Supervisión Funza` |
+| General | Secret | ver abajo |
+| General | Language | `es_419` (igual que 601-604) |
+| Advanced | **Enable WebRTC** | **Yes** |
+| Advanced | Max Contacts | `2` |
+| Voicemail | Enabled | **No** |
 
-**Secret propuesto** (32 chars, generado aleatoriamente — cámbialo si prefieres, o genera
-otro en el servidor con `openssl rand -base64 24`):
+**WebRTC es obligatorio**, no opcional: el softphone del portal se registra por
+`wss://pbx.mcmsolutions.com.co:8089/ws`, y ese interruptor es el que activa DTLS,
+transporte `wss`, cifrado de medios, AVPF, ICE y `rtcp_mux`. Sin él la 610 se crea pero el
+portal no puede registrarla. (Esto no estaba en la primera versión de este documento.)
+
+Luego **Submit → Apply Config**.
+
+**Secret propuesto** (32 chars, aleatorio — o genera otro con `openssl rand -base64 24`):
 
 ```
 CGdD24JoJY7NlFg3xvDP5UllPZj6fnPI
 ```
 
-> Este secret es una *propuesta*. Hasta que la extensión no se cree realmente, no son
-> credenciales válidas. Las credenciales reales son las que queden guardadas en el PBX.
+> Es una *propuesta*, no una credencial válida: hasta que la extensión no exista en el PBX
+> no autentica nada. La credencial real es la que quede guardada en la central.
 
 ### No debe pertenecer a ninguna cola
 
-La 610 **no** se agrega a ninguna cola. La cola `701` debe seguir conteniendo únicamente
-`601, 602, 603, 604`.
+Es el punto entero de la extensión: los agentes 601-604 son miembros **estáticos** de la
+cola 701, así que si un supervisor registrara una de ellas, la cola empezaría a repartirle
+llamadas de pacientes. El backend rechaza cualquier extensión que esté en la cola
+(`escuchaLlamadas.js → iniciar`).
 
-Verificación (la 610 no debe aparecer):
+Tampoco: ningún Ring Group, ningún destino de ruta entrante, ningún Follow Me de un agente.
+
+Verificación — debe imprimir `0`:
 
 ```bash
-sudo asterisk -rx "queue show 701"
+asterisk -rx "queue show" | grep -c 610
 ```
 
-Y en la GUI: **Applications → Queues → 701 → Static Agents** debe listar solo 601-604.
+Comprueba **todas** las colas, no solo la 701; si imprime otra cosa, la 610 quedó dentro de
+alguna y hay que sacarla antes de entregarla. Y que la 701 siga con solo 601-604:
 
-### Consumo por la función de escucha
+```bash
+asterisk -rx "queue show 701"
+```
 
-La función de escucha ya desplegada espera la extensión en `PBX_EXTENSIONS_SUPERVISION`.
-Una vez creada, esa variable debe quedar en `610` y el servicio debe autenticarse con el
-secret real registrado en el PBX.
+### Declararla en el bot
+
+En el entorno del servicio `bot` del tenant:
+
+```
+PBX_EXTENSIONS_SUPERVISION={"610":"<el secret de la 610>"}
+```
+
+> **Ojo con EasyPanel**: desplegar desde su interfaz reescribe las variables del servicio.
+> Añádela en el panel, no con `docker service update`, o se pierde en el siguiente
+> despliegue.
 
 ---
 
@@ -54,46 +83,51 @@ secret real registrado en el PBX.
 
 **Connectivity → Trunks → Add Trunk → Add SIP (chan_pjsip) Trunk**
 
-Pestaña **General**:
+| Pestaña | Campo | Valor |
+|---|---|---|
+| General | Trunk Name | ver nota de nombre |
+| pjsip Settings → General | Username | `101` |
+| pjsip Settings → General | Secret | `73942850d11564862de74cddace36452` |
+| pjsip Settings → General | Authentication | `Outbound` |
+| pjsip Settings → General | Registration | `None` |
+| pjsip Settings → General | SIP Server | `190.24.47.209` |
+| pjsip Settings → General | SIP Server Port | `5060` |
 
-| Campo | Valor |
-|---|---|
-| Trunk Name | `gateway_mcm` |
-| Outbound CallerID | (según lo que acepte el gateway) |
+### Nota de nombre — decidir antes de crearla
 
-Pestaña **pjsip Settings → General**:
+`telefonia-service` origina por AMI contra el troncal que le diga su variable `TRUNK_OUT`,
+hoy con valor `goip` (`apps/telefonia/.env.example`). Pero ese servicio corre sobre el
+**Issabel** del hospital (que usa `chan_sip`), que es una máquina distinta de este FreePBX
+17. Así que hay dos opciones y es decisión tuya:
 
-| Campo | Valor |
-|---|---|
-| Username | `101` |
-| Secret | `73942850d11564862de74cddace36452` |
-| Authentication | `Outbound` |
-| Registration | `None` |
-| SIP Server | `190.24.47.209` |
-| SIP Server Port | `5060` |
+- Nombrar la troncal **`goip`** aquí también → si algún día `telefonia-service` apunta a
+  esta central, `TRUNK_OUT` ya calza sin tocar nada.
+- Nombrarla **`gateway_mcm`** → más explícito, pero habrá que cambiar `TRUNK_OUT` el día
+  que se migre.
+
+No la nombres `LIWA_OUT`: ese nombre ya está reservado en la documentación del proyecto
+para el troncal definitivo que aún no existe.
+
+### Registro: None vs Outbound
 
 `Registration: None` asume que el gateway identifica por IP. **Si el gateway exige
-registro**, cambiar Registration a `Outbound` y volver a aplicar.
+registro**, cambiar a `Outbound` y volver a aplicar.
 
-### Cómo saber cuál de los dos aplica
+Conviene tener claro qué comando mira qué, porque no son intercambiables:
 
-Con `Registration: None` **no existe registro que consultar**. Conviene tenerlo claro
-antes de verificar:
-
-- `pjsip show endpoints` → muestra el *endpoint* y su estado de alcanzabilidad
-  (`Avail`/`Unavail`), que depende de que Qualify esté activo. No dice nada sobre registro.
-- `pjsip show registrations` → esta es la que muestra registros salientes, y con
-  `Registration: None` aparecerá **vacía**. Eso es lo esperado, no un fallo.
+- `pjsip show endpoints` → muestra el *endpoint* y su alcanzabilidad (`Avail`/`Unavail`),
+  y solo si Qualify está activo. **No dice nada sobre registro.**
+- `pjsip show registrations` → esta es la de registros salientes. Con `Registration: None`
+  saldrá **vacía**, y eso es lo correcto, no un fallo.
 
 ```bash
-sudo asterisk -rx "pjsip show endpoints"
-sudo asterisk -rx "pjsip show registrations"
-sudo asterisk -rx "pjsip show endpoint gateway_mcm"
+asterisk -rx "pjsip show endpoints"
+asterisk -rx "pjsip show registrations"
 ```
 
-Criterio: si con `None` las llamadas salen y el endpoint queda `Avail`, está correcto.
-Si el gateway responde `401/403` a los INVITE salientes, entonces exige registro → pasar a
-`Outbound` y confirmar con `pjsip show registrations` que el estado es `Registered`.
+Criterio para decidir: si con `None` las llamadas salen, está bien. Si el gateway responde
+`401`/`403` a los INVITE salientes, exige registro → pasar a `Outbound` y confirmar que
+`pjsip show registrations` marca `Registered`.
 
 ---
 
@@ -101,75 +135,70 @@ Si el gateway responde `401/403` a los INVITE salientes, entonces exige registro
 
 **Connectivity → Outbound Routes → Add Outbound Route**
 
-Pestaña **Route Settings**:
-
 | Campo | Valor |
 |---|---|
 | Route Name | `salientes_co` |
-| Trunk Sequence | `gateway_mcm` |
+| Trunk Sequence | la troncal del paso 2 |
 
-Pestaña **Dial Patterns**:
+Dial Patterns (match pattern, sin prepend ni prefix):
 
-| prepend | prefix | match pattern |
-|---|---|---|
-| | | `3.` |
-| | | `6.` |
+| match pattern | cubre |
+|---|---|
+| `3.` | celulares de Colombia (10 dígitos, empiezan por 3) |
+| `6.` | fijos bajo la numeración de 10 dígitos |
 
-`3.` cubre celulares de Colombia (10 dígitos, empiezan por 3) y `6.` los fijos bajo la
-numeración de 10 dígitos.
+### El solape con las extensiones 6xx no es problema
 
-### Nota sobre el solape con las extensiones 6xx
-
-Las extensiones internas (601-604, 610) también empiezan por 6, pero **no hay conflicto**:
-en Asterisk una coincidencia literal de extensión gana sobre un patrón, y además el match
-es sobre la cadena completa — marcar `601` no coincide con un fijo de 10 dígitos como
-`6012345678`. La marcación interna sigue funcionando igual.
+Las extensiones internas (601-604, 610) también empiezan por 6, pero no hay conflicto: en
+Asterisk una coincidencia literal de extensión gana sobre un patrón, y el match es sobre la
+cadena completa — marcar `601` no coincide con un fijo de 10 dígitos como `6012345678`. La
+marcación interna sigue igual.
 
 ---
 
 ## 4. Aplicar y verificar
 
 ```bash
-sudo fwconsole reload
+fwconsole reload
 ```
 
-Verificación de la troncal (ver la nota de §2 sobre cuál comando aplica):
+Que la ruta exista (hoy este comando devuelve vacío — es justo lo que se está arreglando):
 
 ```bash
-sudo asterisk -rx "pjsip show endpoints"
-sudo asterisk -rx "pjsip show registrations"
+asterisk -rx "dialplan show outbound-allroutes" | head -40
 ```
 
-Verificación de la ruta — que el patrón exista y apunte a la troncal:
+Llamada de prueba a un celular, mirando por dónde sale:
 
 ```bash
-sudo asterisk -rx "dialplan show outbound-allroutes" | head -40
-```
-
-Llamada de prueba a un celular, observando por dónde sale:
-
-```bash
-sudo asterisk -rvvv
-# en otra sesión, o marcando desde la 610:
-core set verbose 5
+asterisk -rvvv
 pjsip set logger on
-# marcar el celular y confirmar en el log que el INVITE va a 190.24.47.209:5060
+# marcar y confirmar en el log que el INVITE va a 190.24.47.209:5060
 ```
 
-Confirmar en el CDR que la llamada salió por `gateway_mcm` y que hubo audio en ambos
-sentidos (no solo `ANSWERED`).
+Confirmar en el CDR que salió por la troncal nueva y que hubo audio en **ambos** sentidos,
+no solo estado `ANSWERED`.
+
+Cierre del círculo: con la ruta de salida viva, deja de ser cierto que "no hay alternativa
+por celular" — el supuesto que `EXTENSION_610.md` da como razón para que la escucha tenga
+que ir por la 610. La 610 sigue siendo la vía correcta (la escucha no debe salir de la
+central), pero conviene actualizar esa frase en el repo del proyecto cuando esto quede
+aplicado, o quedará contradiciendo la realidad.
 
 ---
 
 ## Por qué no se aplicó
 
-El entorno remoto donde se ejecutó esta sesión no tiene forma de llegar al PBX:
+El entorno remoto de esta sesión no puede llegar al PBX. Comprobado:
 
 - No hay cliente SSH instalado (`ssh`, `scp`, `sftp`, `ssh-keygen` no existen).
-- La llave `~/.ssh/solvot-plataforma.key` no está presente; `~/.ssh/` está vacío.
-- El puerto 22 de `157.245.244.48` no es alcanzable (timeout, sin ruta).
-- La salida a internet pasa por un proxy HTTPS con allowlist: incluso `https://example.com`
-  y el panel web del PBX devuelven `403 CONNECT tunnel failed`.
+- La llave `~/.ssh/solvot-plataforma.key` no está; `~/.ssh/` está vacío.
+- El repo `solvot_mcm_salud` **tampoco** contiene material de llave privada (se buscó
+  `BEGIN OPENSSH/RSA/EC PRIVATE KEY` en todo el árbol: cero resultados). Sus `.env.example`
+  son plantillas con los valores en blanco y advierten de no commitear el `.env` real.
+- `pbx.mcmsolutions.com.co` resuelve a `157.245.244.48`, pero el puerto 22 da timeout.
+- La salida a internet pasa por un proxy HTTPS con allowlist: `https://example.com` y el
+  panel web del PBX devuelven ambos `403 CONNECT tunnel failed`.
 
-Por tanto ninguna de las tres tareas pudo ejecutarse ni verificarse. Este documento es la
-configuración a aplicar, no un registro de cambios realizados.
+Es decir: el bloqueo no es la llave. Aunque estuviera, no hay cliente SSH ni ruta de red.
+Este documento es la configuración a aplicar, no un registro de cambios realizados.
