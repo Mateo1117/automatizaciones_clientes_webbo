@@ -1,8 +1,9 @@
 # MCM — Extensión 610, troncal PJSIP al gateway y ruta de salida
 
-**Estado: NO APLICADO.** Pendiente de ejecutarse contra el PBX
-`pbx.mcmsolutions.com.co` (`157.245.244.48`). Nada aquí ha sido verificado contra el
-servidor. Ver "Por qué no se aplicó" al final.
+**Estado: puntos 1, 2 y 3 aplicados el 21/8/2026.** Falta únicamente la llamada de prueba
+que confirme audio en ambos sentidos. Detalle de lo aplicado y verificado al final de cada
+sección. Referencia del PBX:
+`pbx.mcmsolutions.com.co` (`157.245.244.48`).
 
 Proyecto: `solvot_mcm_salud` · FreePBX 17 / Asterisk 22 (solo PJSIP, `chan_sip` no existe).
 
@@ -294,3 +295,63 @@ El entorno remoto de esta sesión no puede llegar al PBX. Comprobado:
 
 Es decir: el bloqueo no es la llave. Aunque estuviera, no hay cliente SSH ni ruta de red.
 Este documento es la configuración a aplicar, no un registro de cambios realizados.
+
+
+---
+
+## Resultado de la aplicación — 21/8/2026
+
+Aplicado por el GUI de FreePBX (`https://pbx.mcmsolutions.com.co/admin`) y verificado por
+consola.
+
+### Troncal `gw_co_out` — APLICADA y alcanzable
+
+```
+Endpoint:  gw_co_out                              Not in use    0 of inf
+   OutAuth:  gw_co_out/101
+  Contact:  gw_co_out/sip:101@190.24.47.209:5060  Avail  107.215
+  Identify:  gw_co_out/gw_co_out
+```
+
+`Avail` con 107 ms de RTT: el gateway responde a los OPTIONS. **`Registration: None` es la
+opción correcta** —identificación por IP, visible en la línea `Identify`— y no hizo falta
+pasar a `Outbound`. `pjsip show registrations` devuelve `No objects found.`, que con `None`
+es lo esperado.
+
+Un campo se apartó de la primera versión de este documento: **Language Code = `es_419`**, no
+`Default`. `IVR_LA_MESA.md` lo deja anotado («le pasó a Funza») y aquí pesa porque el
+`Context` de la troncal es `from-pstn`: si algún día entran llamadas por ella, los anuncios
+saldrían en inglés.
+
+### Ruta `salientes_co` — APLICADA
+
+`outbound-allroutes` incluye `outrt-1`, que contiene los dos patrones:
+
+```
+'_3.' => ... Set(_ROUTENAME=salientes_co) ... Gosub(macro-dialout-trunk,s,1(1,${EXTEN},,off))
+'_6.' => ... Set(_ROUTENAME=salientes_co) ... Gosub(macro-dialout-trunk,s,1(1,${EXTEN},,off))
+```
+
+Verificado que pasa `${EXTEN}` **entero** y no `${EXTEN:1}`: los patrones quedaron en la
+columna *match pattern* y no en *prefix*, que era el error a evitar —habría mandado al
+gateway el número sin el primer dígito, fallando de forma confusa porque la llamada sí sale.
+
+### Observación: esta central no tenía ninguna troncal en el GUI
+
+`gw_co_out` es la única fila de Connectivity → Trunks. Pero la central sí recibe llamadas
+hoy (los DID de Funza), así que **el camino de entrada está configurado fuera del GUI**,
+igual que las colas viven en `queues_custom.conf`. Es el patrón de esta máquina: al depurar
+llamadas entrantes, no buscar en Connectivity → Trunks.
+
+### Pendiente
+
+- **Llamada de prueba a un celular**, confirmando audio en **ambos** sentidos y no solo
+  estado `ANSWERED` en el CDR.
+- **Outbound CallerID** de la troncal quedó vacío a propósito, para no meter variables en la
+  primera prueba. Si el gateway responde `401`/`403` al INVITE, el sospechoso principal no
+  es la autenticación sino el CLI: la llamada sale con `<610>` como origen y muchos gateways
+  rechazan un CLI que no sea un número válido de la línea. Solución: poner el DID de Funza
+  (`6013288948`).
+- **Maximum Channels** también vacío (sin tope). Si el gateway es una caja GSM con un número
+  fijo de canales, conviene ponerle ese número: sin tope, una tanda de recordatorios lo
+  satura y las llamadas fallan sin motivo aparente.
