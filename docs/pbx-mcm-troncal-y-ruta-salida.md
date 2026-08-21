@@ -54,8 +54,28 @@ fwconsole reload
 Verificado después del reload: `max_contacts : 2` y `direct_media : false`. Valores
 anteriores, por si hiciera falta volver: `1` y `yes`.
 
-**El punto 1 queda cerrado en la central.** Lo único pendiente es de lado del bot: sacar el
-secret de **Applications → Extensions → 610 → Secret** para
+**PUNTO 1 CERRADO (21/8/2026)**, de las dos puntas: central y bot. La variable
+`PBX_EXTENSIONS_SUPERVISION={"610":"<secret>"}` quedó guardada y desplegada en el servicio
+del bot de Funza (EasyPanel → Environment, no por `docker service update`).
+
+Va **solo** en el bot de Funza. Una por hospital: 610 Funza, 410 La Mesa, 510 Madrid. Si se
+declarara la 610 en los tres, cualquier administrador del portal de otro hospital podría
+pedirle a su propio portal el secret de la 610 —`adminSoftphone.js` fusiona
+`PBX_EXTENSIONS` y `PBX_EXTENSIONS_SUPERVISION` y los entrega por
+`/admin/softphone/config`— y registrarse con él en la central compartida.
+
+> Matiz sobre el aislamiento, porque `EXTENSION_610.md` lo simplifica: declarar la 610 en
+> otro tenant **no** permitiría oír llamadas de Funza desde la app. Eso lo corta
+> `PBX_EXTENSIONS`, ya que `escuchaLlamadas.js:249` comprueba que el canal esté entre las
+> llamadas activas de ese hospital antes de pinchar nada. La variable de supervisión
+> gobierna qué extensión sirve de oreja y a quién se le entrega su clave.
+
+Verificación pendiente de la escucha: que en el arranque del bot ya no salga «sin extensión
+de supervisión», y la prueba de punta a punta de `EXTENSION_610.md` (agente en llamada →
+Cola en vivo → Escuchar → audio en ambos sentidos → Terminar escucha corta solo la pata del
+supervisor).
+
+Para sacar el secret de **Applications → Extensions → 610 → Secret** para
 `PBX_EXTENSIONS_SUPERVISION` en EasyPanel. No hace falta que salga de la central ni del
 panel.
 
