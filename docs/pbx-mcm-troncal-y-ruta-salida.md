@@ -25,11 +25,14 @@ Correcto en la central: `webrtc: yes` (con `media_encryption: dtls`, `use_avpf: 
 `rtcp_mux: true`, `ice_support: true`), `language: es_419`,
 `callerid: "Supervision Funza" <610>`, `context: from-internal`.
 
-| # | Observado | Esperado | Efecto |
+| # | Observado | Esperado | Veredicto |
 |---|---|---|---|
-| 1 | `Aor: 610` → `MaxContact 1` | Max Contacts `2` | Un segundo registro desaloja al primero: el softphone del portal y un móvil no conviven |
-| 2 | `mailboxes: 610@device` | Voicemail `No` | Apunta a voicemail activo. Si no contestan la escucha debe sonar y acabarse, no caer en buzón. `voicemail_extension` está vacío, así que no es concluyente: confirmar en la GUI |
-| 3 | `direct_media: true` | `no` en WebRTC | Un navegador con DTLS-SRTP no hace media directa con un endpoint no-WebRTC: candidato a audio en un solo sentido. Para la escucha probablemente no muerde (el 610 se puentea con un canal *snoop*, interno de Asterisk, que no admite media directa), pero sí para llamadas normales desde o hacia el 610 |
+| 1 | `max_contacts: 1` + `remove_existing: true` | Max Contacts `2` | **Confirmada.** Los dos juntos hacen que un segundo registro no falle sino que **expulse al primero en silencio**: el supervisor abre el softphone del portal y la sesión anterior se cae sin aviso. Subir a `2` |
+| 2 | `mailboxes: 610@device` | Voicemail `No` | **Descartada.** La 601 sale igual (`mailboxes: 601@device`), así que es del molde con que FreePBX genera estas extensiones, no señal de voicemail activo. Para cerrarlo del todo: `voicemail show users \| grep 610`, sin resultado = no hay buzón |
+| 3 | `direct_media: true` | `false` | **Confirmada y real.** La 601 tiene `direct_media: false`: no es el estándar de la central, la 610 es la excepción. En WebRTC el navegador negocia DTLS-SRTP y no puede hacer media directa con un endpoint que no lo hable, así que el reinvite es candidato a audio en un solo sentido. Ponerla en `No` (Advanced → Direct Media) |
+
+Contrastado contra la 601 el 20/8/2026 — un agente que funciona hoy. Es lo que permitió
+descartar la #2 y confirmar la #3: sin ese contraste, las dos parecían igual de sospechosas.
 
 `Unavailable` y `0 of inf`, sin línea `Contact`, **no es un fallo**: no hay nada registrado en
 ese momento. Es lo esperado si nadie tiene abierto el softphone del portal.
@@ -39,20 +42,10 @@ ese momento. Es lo esperado si nadie tiene abierto el softphone del portal.
 requisito de seguridad del que depende todo lo demás: no le van a entrar llamadas de
 pacientes.
 
-Queda por hacer en el punto 1: corregir Max Contacts a `2`, resolver las otras dos
-desviaciones de la tabla de arriba, y sacar el secret de **Applications → Extensions → 610 → Secret** para
+Queda por hacer en el punto 1: corregir Max Contacts a `2` y Direct Media a `No`, y sacar
+el secret de **Applications → Extensions → 610 → Secret** para
 `PBX_EXTENSIONS_SUPERVISION` en EasyPanel. No hace falta que salga de la central ni del
 panel.
-
-> **Antes de cambiar `direct_media`, contrasta con un agente que ya funcione:**
->
-> ```bash
-> asterisk -rx "pjsip show endpoint 601" | grep -E "direct_media|mailboxes|webrtc"
-> ```
->
-> Si la 601 sale igual y la escucha funciona hoy, es el estándar de esta central y no una
-> anomalía de la 610: déjalo quieto. Max Contacts a `2` sí se cambia en cualquier caso —es
-> un campo en Advanced y no tiene contraindicación.
 
 <details>
 <summary>Los pasos de creación, por si hiciera falta rehacerla (o para la 410 y la 510)</summary>
