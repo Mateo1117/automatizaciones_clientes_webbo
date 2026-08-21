@@ -34,15 +34,25 @@ Correcto en la central: `webrtc: yes` (con `media_encryption: dtls`, `use_avpf: 
 `Unavailable` y `0 of inf`, sin línea `Contact`, **no es un fallo**: no hay nada registrado en
 ese momento. Es lo esperado si nadie tiene abierto el softphone del portal.
 
-Queda por hacer en el punto 1:
+**Aislamiento verificado el 20/8/2026**: `asterisk -rx "queue show" | grep -c 610` devuelve
+`0`. La 610 no es miembro de ninguna cola —ni la 700, ni la 701, ni la 702—, que es el
+requisito de seguridad del que depende todo lo demás: no le van a entrar llamadas de
+pacientes.
 
-```bash
-asterisk -rx "queue show" | grep -c 610     # debe dar 0
-```
-
-Y sacar el secret de **Applications → Extensions → 610 → Secret** para
+Queda por hacer en el punto 1: corregir Max Contacts a `2`, resolver las otras dos
+desviaciones de la tabla de arriba, y sacar el secret de **Applications → Extensions → 610 → Secret** para
 `PBX_EXTENSIONS_SUPERVISION` en EasyPanel. No hace falta que salga de la central ni del
 panel.
+
+> **Antes de cambiar `direct_media`, contrasta con un agente que ya funcione:**
+>
+> ```bash
+> asterisk -rx "pjsip show endpoint 601" | grep -E "direct_media|mailboxes|webrtc"
+> ```
+>
+> Si la 601 sale igual y la escucha funciona hoy, es el estándar de esta central y no una
+> anomalía de la 610: déjalo quieto. Max Contacts a `2` sí se cambia en cualquier caso —es
+> un campo en Advanced y no tiene contraindicación.
 
 <details>
 <summary>Los pasos de creación, por si hiciera falta rehacerla (o para la 410 y la 510)</summary>
