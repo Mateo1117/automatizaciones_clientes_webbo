@@ -413,3 +413,58 @@ recibir esas entrantes por otro camino.
 Antes de crear una troncal identificada por IP, comprobar si esa IP coincide con la red
 desde la que se registran teléfonos. Es un dato que no aparece en ningún formulario y que
 convierte un cambio rutinario en una caída de sede.
+
+
+## Solución definitiva: troncal a mano + troncal Custom (21/8/2026)
+
+`identify_by = Username` (etiqueta **Match Inbound Authentication** en el GUI) **no sirve**:
+se guarda en la base, pero FreePBX genera el `identify` a partir del campo `sip_server`
+igualmente. Comprobado encendiendo la troncal con ese valor puesto — el `Match:
+190.24.47.209/32` volvió a aparecer.
+
+Tampoco se tocó `endpoint_identifier_order` global: habría funcionado, pero afecta a
+`provetel`, que sostiene el tráfico real de la central. Demasiado alcance para el problema.
+
+La solución adoptada sigue **el patrón que ya usaba esta máquina para `provetel`**: definir la
+troncal a mano en `/etc/asterisk/pjsip_custom.conf`, omitiendo a propósito la sección
+`type=identify`, y exponerla a FreePBX como una troncal **Custom**.
+
+1. **Borrada** la troncal PJSIP del GUI (era la que generaba el `identify`).
+2. **Añadido** a `pjsip_custom.conf` el bloque `gw_co_out` con tres secciones —`endpoint`,
+   `auth`, `aor`— y **ninguna** `identify`. Lleva un comentario explicando por qué, para que
+   nadie la "complete" en el futuro.
+3. **Creada** una troncal **Custom** en el GUI llamada `gw_co_out`, con dial string
+   `PJSIP/$OUTNUM$@gw_co_out`. Las Custom solo generan dialplan, no configuración PJSIP: por
+   eso no puede volver a crear el `identify`.
+4. **Reapuntada** la ruta `salientes_co` a esa troncal.
+
+Estado verificado tras el reload:
+
+```
+Identify:  provetel/provetel        <- solo provetel, gw_co_out ya no aparece
+Endpoint:  gw_co_out                                     Not in use   0 of inf
+   OutAuth:  gw_co_out/101
+     Contact:  gw_co_out/sip:190.24.47.209:5060          Avail   101.237
+OUT_1 = AMP:PJSIP/$OUTNUM$@gw_co_out
+trunkid 1 | gw_co_out | custom
+```
+
+La troncal Custom reutilizó el `trunkid 1`, que es el índice que la ruta ya llamaba en
+`macro-dialout-trunk`, así que la ruta quedó bien enganchada sin tocar los patrones.
+
+### Detalle que confunde al verificar
+
+`NonQual` e `Invalid` justo después de un reload **no son un fallo**: el qualify corre cada
+60 s y aún no ha hecho su primer ciclo. A los pocos minutos el contacto pasó a `Avail` con
+101 ms y el endpoint a `Not in use`. Comprobar antes de ese primer ciclo lleva a diagnosticar
+un problema que no existe.
+
+Lo mismo con el GUI: verificar **después** de pulsar Apply Config, no antes. Una comprobación
+temprana mostró un `identify` que ya se había quitado, porque Asterisk seguía con la
+configuración anterior.
+
+### Copia de seguridad
+
+Antes de tocar `pjsip_custom.conf` se guardó copia en `/root/pjsip_custom.conf.bak-<epoch>`.
+Ese archivo contiene la troncal `provetel` de producción: **hacer copia siempre antes de
+editarlo**. Vuelta atrás: restaurar la copia y `fwconsole reload`.
