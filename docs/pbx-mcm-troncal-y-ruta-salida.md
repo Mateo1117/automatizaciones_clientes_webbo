@@ -15,7 +15,7 @@ Proyecto: `solvot_mcm_salud` · FreePBX 17 / Asterisk 22 (solo PJSIP, `chan_sip`
 
 ## 1. Extensión 610 «Supervisión»
 
-### La 610 YA EXISTE — verificado el 20/8/2026
+### La 610 YA EXISTE — verificada y corregida el 21/8/2026
 
 `pjsip show endpoint 610` en el PBX devuelve el endpoint, así que **no hay que
 crearla**: recrearla por la GUI le cambiaría el secret y dejaría muda la escucha de Funza.
@@ -27,23 +27,35 @@ Correcto en la central: `webrtc: yes` (con `media_encryption: dtls`, `use_avpf: 
 
 | # | Observado | Esperado | Veredicto |
 |---|---|---|---|
-| 1 | `max_contacts: 1` + `remove_existing: true` | Max Contacts `2` | **Confirmada.** Los dos juntos hacen que un segundo registro no falle sino que **expulse al primero en silencio**: el supervisor abre el softphone del portal y la sesión anterior se cae sin aviso. Subir a `2` |
+| 1 | `max_contacts: 1` + `remove_existing: true` | Max Contacts `2` | **CORREGIDA 21/8.** Los dos juntos hacen que un segundo registro no falle sino que **expulse al primero en silencio**: el supervisor abre el softphone del portal y la sesión anterior se cae sin aviso. Subir a `2` |
 | 2 | `mailboxes: 610@device` | Voicemail `No` | **Descartada.** La 601 sale igual (`mailboxes: 601@device`), así que es del molde con que FreePBX genera estas extensiones, no señal de voicemail activo. Para cerrarlo del todo: `voicemail show users \| grep 610`, sin resultado = no hay buzón |
-| 3 | `direct_media: true` | `false` | **Confirmada y real.** La 601 tiene `direct_media: false`: no es el estándar de la central, la 610 es la excepción. En WebRTC el navegador negocia DTLS-SRTP y no puede hacer media directa con un endpoint que no lo hable, así que el reinvite es candidato a audio en un solo sentido. Ponerla en `No` (Advanced → Direct Media) |
+| 3 | `direct_media: true` | `false` | **CORREGIDA 21/8.** La 601 tiene `direct_media: false`: no es el estándar de la central, la 610 es la excepción. En WebRTC el navegador negocia DTLS-SRTP y no puede hacer media directa con un endpoint que no lo hable, así que el reinvite es candidato a audio en un solo sentido. Ponerla en `No` (Advanced → Direct Media) |
 
-Contrastado contra la 601 el 20/8/2026 — un agente que funciona hoy. Es lo que permitió
+Contrastado contra la 601 el 21/8/2026 — un agente que funciona hoy. Es lo que permitió
 descartar la #2 y confirmar la #3: sin ese contraste, las dos parecían igual de sospechosas.
 
 `Unavailable` y `0 of inf`, sin línea `Contact`, **no es un fallo**: no hay nada registrado en
 ese momento. Es lo esperado si nadie tiene abierto el softphone del portal.
 
-**Aislamiento verificado el 20/8/2026**: `asterisk -rx "queue show" | grep -c 610` devuelve
+**Aislamiento verificado el 21/8/2026**: `asterisk -rx "queue show" | grep -c 610` devuelve
 `0`. La 610 no es miembro de ninguna cola —ni la 700, ni la 701, ni la 702—, que es el
 requisito de seguridad del que depende todo lo demás: no le van a entrar llamadas de
 pacientes.
 
-Queda por hacer en el punto 1: corregir Max Contacts a `2` y Direct Media a `No`, y sacar
-el secret de **Applications → Extensions → 610 → Secret** para
+Las dos correcciones se aplicaron por base de datos, que es la fuente de verdad de las
+extensiones en FreePBX (los `.conf` de pjsip se regeneran en cada reload):
+
+```bash
+mysql asterisk -e "UPDATE sip SET data='2'  WHERE id='610' AND keyword='max_contacts';"
+mysql asterisk -e "UPDATE sip SET data='no' WHERE id='610' AND keyword='direct_media';"
+fwconsole reload
+```
+
+Verificado después del reload: `max_contacts : 2` y `direct_media : false`. Valores
+anteriores, por si hiciera falta volver: `1` y `yes`.
+
+**El punto 1 queda cerrado en la central.** Lo único pendiente es de lado del bot: sacar el
+secret de **Applications → Extensions → 610 → Secret** para
 `PBX_EXTENSIONS_SUPERVISION` en EasyPanel. No hace falta que salga de la central ni del
 panel.
 
