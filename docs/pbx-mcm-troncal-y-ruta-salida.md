@@ -355,3 +355,61 @@ llamadas entrantes, no buscar en Connectivity → Trunks.
 - **Maximum Channels** también vacío (sin tope). Si el gateway es una caja GSM con un número
   fijo de canales, conviene ponerle ese número: sin tope, una tanda de recordatorios lo
   satura y las llamadas fallan sin motivo aparente.
+
+
+---
+
+## INCIDENTE 21/8/2026 — la troncal tumbó los registros de toda la oficina
+
+**Causa raíz: el GoIP y la oficina comparten la misma IP pública, `190.24.47.209`.** El
+gateway es un aparato físico en la sede, detrás de la misma conexión a internet que los
+puestos de trabajo.
+
+Al crear la troncal, FreePBX generó automáticamente un objeto *identify*:
+
+```
+Identify:  gw_co_out/gw_co_out
+     Match: 190.24.47.209/32
+```
+
+Asterisk identifica endpoints **por IP antes que por usuario** (orden por defecto
+`ip,username,anonymous`). Así que cualquier `REGISTER` salido de la oficina se atribuía a la
+troncal: el softphone mandaba `To: sip:507@...`, Asterisk decidía «esto es `gw_co_out`»,
+buscaba un AOR llamado `507` entre los de esa troncal —que solo tiene `gw_co_out`— y
+respondía **`404 Not Found`**.
+
+De ahí las tres pistas que parecían contradictorias:
+
+- Fallaban **todas** las extensiones de la sede, no una: el choque es por IP.
+- **Desde fuera funcionaba**: sin coincidencia de IP, Asterisk identifica por usuario y
+  encuentra el endpoint correcto.
+- La extensión existía y estaba **idéntica a una que sí registraba** (507 vs 502): el
+  problema nunca estuvo en la extensión.
+
+Mitigación inmediata aplicada: **Disable Trunk = Yes**. Los registros volvieron al instante.
+
+### Arreglo definitivo
+
+Quitar el *identify* por IP de `gw_co_out`, **no** cambiar el orden global de identificación.
+
+La troncal es solo de salida: para sacar llamadas, Asterisk manda el INVITE y se autentica
+al ser desafiado, sin que el *identify* intervenga. El *identify* solo sirve para reconocer
+**entrantes**, y las entrantes llegan por `provetel` (tres IP propias, sin choque). Se
+estaban pagando los softphones de una sede entera por una función que no se usa.
+
+Tocar `endpoint_identifier_order` global también funcionaría, pero afectaría a `provetel`,
+que sostiene el tráfico real de la central (se le vieron 13 llamadas simultáneas). No es
+sitio para experimentar.
+
+### Restricción permanente, a tener presente
+
+**El GoIP y la oficina van a seguir compartiendo IP pública.** Si en el futuro hace falta
+que el gateway envíe llamadas **entrantes**, no se podrá resolver por IP sin volver a romper
+los registros de la sede. Habría que pedir al proveedor una IP distinta para el equipo, o
+recibir esas entrantes por otro camino.
+
+### Lección para la próxima troncal
+
+Antes de crear una troncal identificada por IP, comprobar si esa IP coincide con la red
+desde la que se registran teléfonos. Es un dato que no aparece en ningún formulario y que
+convierte un cambio rutinario en una caída de sede.
