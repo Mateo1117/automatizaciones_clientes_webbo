@@ -664,3 +664,82 @@ producía *"JSON parameter needs to be valid JSON"*. Y varias propiedades del ar
 `estado_del_lead`, `presupuesto`, `tipo_inversion`, `utm_campaign`, `utm_source`, y
 `gestion_comercial` — la real se llama **`gesti_n_comercial`** (con el guion bajo en lugar de
 la ó). El body que quedó aplicado ya usa sólo propiedades que existen.
+
+
+---
+
+## Auditoría definitiva: qué le tocó n8n a Colina del Viento
+
+La primera pasada usó `automatizacion` con valor como proxy, lo cual es impreciso: un asesor
+también puede tocar esa propiedad. HubSpot guarda el **origen de cada cambio de propiedad**
+(`propertiesWithHistory`), así que la atribución se puede hacer con certeza.
+
+### Cómo se identificó a n8n
+
+`POST /crm/v3/objects/contacts/batch/read` con
+`propertiesWithHistory: [automatizacion, hs_lead_status, motivos_descalificaci_n, gesti_n_comercial]`
+sobre los 242 candidatos (en lotes de **50** — el límite para historiales es 50, no 100).
+
+Cada versión trae `sourceType` y `sourceId`. Orígenes encontrados en la cuenta:
+
+| `sourceType` | Qué es | Cambios |
+|---|---|---|
+| `INTEGRATION` | apps vía API (n8n entre ellas) | 1.181 |
+| `CRM_UI` | personas en la interfaz de HubSpot | 1.146 |
+| `AUTOMATION_PLATFORM` | workflows propios de HubSpot | 69 |
+| `MERGE_OBJECTS` | fusiones de contactos | 37 |
+| `CRM_UI_BULK_ACTION` | acciones masivas manuales | 27 |
+| `MOBILE_ANDROID` | app móvil | 9 |
+
+Dentro de `INTEGRATION` hay dos apps: **`13577433`** y `33500359`. La primera es **n8n**: es
+el único origen que escribe `automatizacion` (85 de 86 cambios; el otro es `MERGE_OBJECTS`) y
+`motivos_descalificaci_n` (57). `33500359` sólo tocó `hs_lead_status` 5 veces.
+
+### Resultado
+
+| Universo | Contactos |
+|---|---|
+| Colina modificados por cualquier causa desde 18-ago | 1.914 |
+| …con `automatizacion` poblada (proxy de la 1ª pasada) | 242 |
+| **…modificados por n8n (`INTEGRATION 13577433`)** | **85** |
+
+Fechas del último cambio hecho por n8n:
+
+```
+2026-08-19: 72
+2026-08-20: 13
+```
+
+**Nada después del 20 de agosto.** Lo que n8n escribió:
+
+| Cambio | Veces |
+|---|---|
+| `automatizacion = Finalizo sin Exito` | 84 |
+| `motivos_descalificaci_n = DESINTERES O EQUIVOCADO` | 57 |
+| `gesti_n_comercial = Descalificado` | 11 |
+| `hs_lead_status = Contactado` | 6 |
+| `automatizacion = Finalizada` | 1 |
+
+Esos valores corresponden exactamente a `Crear y Actualizar Contacto19` / `20` y
+`📝 Cambiar proyecto5` / `6`, que son los nodos de la rama Colina de `Switch6` — la que se
+desconectó. Coherente: los crons de seguimiento corrieron el 19 y 20 de agosto sobre leads de
+Colina y los marcaron como descalificados. Después del 20 no volvieron a aparecer porque ya no
+cumplían el filtro `automatizacion IN (Iniciada, En proceso)`.
+
+### Se resuelve la duda de la concentración del 29 de agosto
+
+En la pasada anterior quedó sin explicar el pico de 172 contactos del 29 de agosto. **No fue
+n8n:** ningún cambio atribuido a `INTEGRATION 13577433` cae en esa fecha. Fue actividad de
+`CRM_UI` / `CRM_UI_BULK_ACTION` / `AUTOMATION_PLATFORM`, es decir personas o workflows de
+HubSpot.
+
+### Pendiente de decisión: revertir los 85
+
+Los 85 quedaron marcados como `Finalizo sin Exito` + `Descalificado` +
+`DESINTERES O EQUIVOCADO` por una automatización que no debía tocarlos. Si se quiere revertir,
+el historial de propiedades trae el **valor anterior de cada uno**, así que se puede restaurar
+contacto por contacto con precisión. Requiere confirmación del cliente: no se hizo nada.
+
+Listado completo entregado como CSV (`leads-colina-modificados-POR-AUTOMATIZACION.csv`), con
+una columna `detalle` que lista cada cambio con fecha, propiedad y valor. No se versiona por
+contener correos y teléfonos.
