@@ -548,3 +548,119 @@ desconectada—, así que vienen de los webhooks o de la versión anterior del f
 Ese workflow **no está** en `flow.mcmasociados.tech`. Se listaron los 20 workflows de la
 instancia y no aparece ninguno con ese nombre. Vive en otra n8n (por la interfaz, n8n Cloud).
 Para revisarlo hace falta su URL y una API key propia.
+
+
+---
+
+## Cuarta ronda — Colina del Viento fuera de los recordatorios
+
+Instrucción del cliente: **los recordatorios y seguimientos no deben incluir Colina del
+Viento.** Eso invalida la lectura hecha en la tercera ronda (se interpretó que la rama de
+Colina estaba "muerta por error"); en realidad **no debe existir**.
+
+### Por dónde entraba Colina a los recordatorios
+
+Tres crons de seguimiento, cada uno con su buscador y su Switch por proyecto:
+
+| Trigger | Hora (UTC) | Buscador | Switch |
+|---|---|---|---|
+| `Trigger diario 2PM seguimiento` | 13 | `🔍 Buscar Leads con Automatización1` | `Switch5` |
+| `Trigger diario 10AM Mañana2` | 15 | `🔍 Buscar Leads con Automatización` | `Switch4` |
+| `Trigger diario 10AM Mañana3` | 16 | `🔍 Buscar Leads con Automatización2` | `Switch6` |
+
+Los tres buscadores tenían **dos `filterGroups`**, y en la API de HubSpot los grupos se
+combinan con **OR**, no con AND:
+
+```json
+"filterGroups": [
+  { "filters": [{ "propertyName": "automatizacion", "operator": "IN",
+                  "values": ["Iniciada", "En proceso"] }] },
+  { "filters": [{ "propertyName": "proyecto", "operator": "CONTAINS_TOKEN", "value": "Tatika" },
+                { "propertyName": "proyecto", "operator": "CONTAINS_TOKEN", "value": "Colina Del Viento" }] }
+]
+```
+
+O sea *(automatizacion Iniciada/En proceso)* **OR** *(proyecto …)*. El primer grupo por sí
+solo trae leads de **cualquier proyecto**, así que Colina entraba por ahí incluso sin
+mencionarlo. Y la salida 0 de cada Switch (`"Colina Del Viento"`) estaba conectada y enviaba:
+
+- `Switch5` → `IF8` → `Cloud16` (`seguimiento_1_colina_del_viento`) / `Cloud23` (`continuar_flujo_colina`)
+- `Switch4` → `IF10` → `Cloud17` (`seguimiento_2_colina_del_viento`) / `Cloud22` (`continuar_flujo_colina`)
+- `Switch6` → `IF12` → `Cloud21` (`seguimiento_4_…`), `Cloud18` (`seguimiento_3_…`),
+  `Cloud19` (`continuar_flujo_colina`), `Cloud20` (texto de cierre), y además escrituras en
+  HubSpot: `Crear y Actualizar Contacto19` / `20` (`automatizacion = Finalizo sin Exito`,
+  `gesti_n_comercial = Descalificado`) y `📝 Cambiar proyecto5` / `6`
+  (`motivos_descalificaci_n`).
+
+### Corregido
+
+1. Los **tres buscadores** pasan a un **único `filterGroup`** (AND real) con
+   `proyecto EQ "Tatika"`. Ya no traen Colina ni ningún otro proyecto.
+2. Se **desconecta la salida 0 ("Colina Del Viento")** de `Switch4`, `Switch5` y `Switch6`.
+   Doble seguro: aunque un lead se colara, no tiene a dónde ir.
+3. Se **revierte** el cambio hecho el 18 de agosto en el poller de 15 min
+   (`🔍 Buscar Últimos Contactos…1`): vuelve a `"values": ["Tatika"]`.
+
+Verificado en vivo sobre `sDZyht21H9H3w2Tl`: ninguno de los cuatro buscadores contiene ya la
+cadena "Colina", y las tres salidas 0 quedaron vacías.
+
+> Las ramas de Colina siguen existiendo como nodos, sólo sin entrada. Reconectarlas es
+> arrastrar una conexión si algún día se quiere reactivar.
+
+### Auditoría: qué se le tocó a Colina del Viento
+
+Consultado en HubSpot con `proyecto EQ "Colina Del Viento"`:
+
+| Consulta | Contactos |
+|---|---|
+| `lastmodifieddate >= 2026-08-18` | **1.914** |
+| …de esos, con `automatizacion` con valor | **242** |
+
+Los 1.914 incluyen cualquier modificación (asesores, importaciones, otras integraciones), así
+que no son atribuibles a la automatización. Los **242** con `automatizacion` poblada son los
+que sí pasaron por un flujo:
+
+| `automatizacion` | Contactos |
+|---|---|
+| Finalizo sin Exito | 92 |
+| Iniciada | 56 |
+| Finalizada | 46 |
+| Agendar Cita | 27 |
+| Llamar | 15 |
+| Error | 6 |
+
+Última modificación por día (hora Colombia):
+
+```
+2026-08-18:   1     2026-08-29: 172   <- concentración
+2026-08-19:  13     2026-08-30:   5
+2026-08-20:   4     2026-08-31:  10
+2026-08-24:   1     2026-09-01:  24
+2026-08-25:   1     2026-09-02:   7
+2026-08-27:   1     2026-09-03:   2
+2026-08-28:   1
+```
+
+`motivos_descalificaci_n` de los 242: 164 `DESINTERES O EQUIVOCADO`, 15 `UBICACIÓN`,
+12 `PRECIO`, 7 `INVIRTIO OTRO PROYECTO`, 5 `NO SE LOGRO CONTACTO`, 1 `PLAZO`,
+1 `SIN PRESUPUESTO`, 37 vacío. `DESINTERES O EQUIVOCADO` y `NO SE LOGRO CONTACTO` son los dos
+únicos valores que escriben los nodos `📝 Cambiar proyecto3/4/5/6`; los demás (UBICACIÓN,
+PRECIO, PLAZO…) no los escribe ningún nodo, así que son de captura manual.
+
+**Lo que no se pudo determinar:** el historial de ejecuciones de n8n sólo llega al
+**1 de septiembre** (la instancia purga las anteriores), así que **no hay evidencia directa
+de qué disparó la concentración de 172 contactos del 29 de agosto**. Los flujos tenían la
+capacidad de hacerlo, pero afirmarlo sin el log sería especular.
+
+El listado completo de los 242 se entregó como CSV al cliente. **No se versiona** porque
+lleva correos y teléfonos; `.gitignore` bloquea `leads-*.csv`.
+
+### Nota sobre el JSON que el cliente estaba editando
+
+El body que se estaba pegando a mano en `🔍 Buscar Leads con Automatización1` tenía además un
+**error de sintaxis**: una llave `}` duplicada tras el filtro de `proyecto`, que es lo que
+producía *"JSON parameter needs to be valid JSON"*. Y varias propiedades del array
+`properties` no existen en la cuenta: `numero_de_telefono`, `numero_de_movil`, `vid`,
+`estado_del_lead`, `presupuesto`, `tipo_inversion`, `utm_campaign`, `utm_source`, y
+`gestion_comercial` — la real se llama **`gesti_n_comercial`** (con el guion bajo en lugar de
+la ó). El body que quedó aplicado ya usa sólo propiedades que existen.

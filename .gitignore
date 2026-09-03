@@ -1,0 +1,4 @@
+
+# Exportes con datos personales de contactos (correos, telefonos). No versionar.
+leads-*.csv
+*-contactos.csv
