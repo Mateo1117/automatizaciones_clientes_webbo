@@ -743,3 +743,87 @@ contacto por contacto con precisión. Requiere confirmación del cliente: no se 
 Listado completo entregado como CSV (`leads-colina-modificados-POR-AUTOMATIZACION.csv`), con
 una columna `detalle` que lista cada cambio con fecha, propiedad y valor. No se versiona por
 contener correos y teléfonos.
+
+
+---
+
+## Especificación de estados por caso (Tatika)
+
+El cliente definió los 6 casos de uso y su estado esperado, con la regla de que la
+automatización **sólo escriba lo que la especificación indica** y nada más.
+
+### Valores internos vs. etiquetas
+
+Las etiquetas que se ven en HubSpot no son los valores internos que hay que escribir por API.
+Equivalencias verificadas contra `/crm/v3/properties/contacts`:
+
+| En la especificación | Valor interno real |
+|---|---|
+| "Solicito cita" | `Agendar Cita` |
+| "Solicita llamada" | `Llamar` |
+| "Finalizada sin éxito" | `Finalizo sin Exito` |
+| "Agendamiento de llamada" | `Agendamiento Llamada` |
+| "Descartado" | `Descartado` |
+
+### Tabla final aplicada
+
+| Caso | `automatizacion` | `hs_lead_status` | `gesti_n_comercial` | `motivos_descalificaci_n` | Nodos |
+|---|---|---|---|---|---|
+| 1 · inicia | `Iniciada` | no se escribe | no se escribe | no se escribe | CyA8, CyA12 |
+| 2 · responde | `En proceso` | `Contactado` | no se escribe | no se escribe | CyA3, CyA4, CyA7, CyA18, CyA21 |
+| 3 · pide llamada | `Llamar` | **`Agendamiento Llamada`** | no se escribe | no se escribe | CyA2, CyA13, CyA16 |
+| 3 · pide cita | `Agendar Cita` | **`Agendamiento visita`** | no se escribe | no se escribe | CyA9, CyA14, CyA17 |
+| 4 · finaliza tras responder | `Finalizo sin Exito` | `Contactado` | no se escribe | no se escribe | CyA10, CyA19 |
+| 5 · no interesado | `Finalizada` | **`Descartado`** | no se escribe | no se escribe | CyA1, CyA5 |
+| 6 · sin señales de vida | `Finalizo sin Exito` | `ilocalizable` | no se escribe | no se escribe | CyA15, CyA20 |
+
+Cambios respecto a lo que hacía antes:
+
+1. **`gesti_n_comercial` eliminada de 16 nodos.** La automatización ya no la escribe en ningún
+   caso (antes ponía `Seguimiento`, `Seguimiento Tibio` o `Descalificado`).
+2. **`motivos_descalificaci_n`: 6 nodos `📝 Cambiar proyecto*` puenteados y deshabilitados.**
+   Esos nodos sólo servían para escribir esa propiedad. Se reconectó cada predecesor
+   directamente con su sucesor, así que la cadena sigue igual sin ellos:
+   `CyA10 → WhatsApp Cloud11` y `CyA15 → WhatsApp Cloud7`. Los nodos quedan en el lienzo,
+   deshabilitados, por si se quieren revisar.
+3. **Caso 3 separado en dos.** La especificación juntaba llamada y cita bajo
+   "Agendamiento de llamada", pero HubSpot tiene los dos valores. Confirmado con el cliente:
+   quien pide llamada queda en `Agendamiento Llamada` y quien pide visita en
+   `Agendamiento visita`. Los nodos ya estaban separados, así que no costó nada.
+4. **Caso 5: `Contactado` → `Descartado`.**
+
+### Fuera de la especificación
+
+Los nodos `Crear y Actualizar Contacto`, `6` y `11` escriben `automatizacion = Error` cuando
+un lead falla al procesarse. La especificación no cubre ese caso. Se dejaron como estaban:
+sólo escriben `automatizacion`, ninguna otra propiedad, así que cumplen la regla de "sólo lo
+que indica el texto".
+
+---
+
+## Corrección de un error propio: `Iniciada` prematuro en la rama de ingesta
+
+Al contrastar el **caso 1** con lo implementado apareció un bug **introducido por mí** en la
+rama del formulario web.
+
+`Decidir Accion (nuevo / doble conversion)` escribía, al crear un contacto nuevo:
+
+```js
+hs_lead_status: 'Nuevo lead',
+automatizacion: 'Iniciada',   // <- incorrecto
+```
+
+Pero `Iniciada` significa que la automatización **ya arrancó y mandó el primer mensaje**, y
+eso lo marca `Crear y Actualizar Contacto8` **después** del envío. Marcarlo al crear el
+contacto tiene una consecuencia concreta: el poller trae el lead, el `Switch` lo evalúa,
+encuentra `automatizacion = Iniciada`, lo manda a la salida **"Aut Iniciada" → No Operation**
+y lo descarta.
+
+**Resultado: todo lead que entraba por el formulario web quedaba marcado como "Iniciada" sin
+que se le hubiera enviado nunca un mensaje, y el poller no volvía a tocarlo.** Es literalmente
+el síntoma de *"inicia pero no sale el mensaje"*, para esa vía de entrada.
+
+Corregido: la rama de ingesta ya no escribe `automatizacion`. El contacto se crea con
+`hs_lead_status = 'Nuevo lead'` y `automatizacion` vacía, el poller lo recoge normalmente y
+`Crear y Actualizar Contacto8` marca `Iniciada` cuando el mensaje sale de verdad — que es lo
+que pide el caso 1.
