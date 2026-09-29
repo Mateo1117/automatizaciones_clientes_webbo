@@ -827,3 +827,112 @@ Corregido: la rama de ingesta ya no escribe `automatizacion`. El contacto se cre
 `hs_lead_status = 'Nuevo lead'` y `automatizacion` vacía, el poller lo recoge normalmente y
 `Crear y Actualizar Contacto8` marca `Iniciada` cuando el mensaje sale de verdad — que es lo
 que pide el caso 1.
+
+
+---
+
+## El reloj del seguimiento: de `lastmodifieddate` a `fecha_ultimo_mensaje`
+
+### El problema
+
+El cron de seguimiento decide si cierra un lead con la condición
+`minutos_transcurridos >= 1200` (20 horas). Ese contador se calculaba en
+`🔄 Procesar Leads Encontrados2` así:
+
+```js
+const diferenciaMinutos = calcularDiferenciaMinutos(lastmodifieddate);
+```
+
+**`lastmodifieddate` no mide el tiempo desde que se le escribió al cliente.** Cambia por
+cualquier motivo: una nota asociada, un recálculo de HubSpot, un asesor editando la ficha.
+Cada uno de esos eventos **reinicia el reloj**, así que la secuencia se estira sola: un lead
+que alguien revise a diario nunca llega al umbral y sigue recibiendo mensajes
+indefinidamente.
+
+Caso real, ejecución `2084906` del 28-sep 16:00 — los 6 leads de Tatiká que entraron:
+
+| Lead | `lastmodifieddate` | min. transcurridos | ≥1200 | Resultado |
+|---|---|---|---|---|
+| Mirllan Elid Tafur | 28-sep 03:22 | 1057 | no | otro mensaje de seguimiento |
+| Kelly Guerrero | 28-sep 01:14 | 1186 | no | otro mensaje de seguimiento |
+| Camilo Andrés Reyes | 28-sep 00:51 | 1209 | sí | cerrado `ilocalizable` |
+| Ivonne A Ayala | 27-sep 20:23 | 1477 | sí | cerrado `ilocalizable` |
+| Dairo | 27-sep 17:46 | 1634 | sí | cerrado `ilocalizable` |
+| Jennifer sarmiento | 27-sep 17:39 | 1641 | sí | cerrado `ilocalizable` |
+
+Kelly quedó fuera **por 14 minutos**. Y el caso de Mirllan enseña el problema de fondo: su
+automatización arrancó el 27-sep a las 14:30, pero su `lastmodifieddate` es del 28-sep a las
+03:22 — algo la modificó 13 horas después y le reinició el conteo.
+
+### La solución
+
+Se creó la propiedad de contacto **`fecha_ultimo_mensaje`** en HubSpot:
+
+| Campo | Valor |
+|---|---|
+| `name` | `fecha_ultimo_mensaje` |
+| `label` | Fecha ultimo mensaje automatizacion |
+| `type` / `fieldType` | `datetime` / `date` |
+| `groupName` | `contactinformation` |
+| `formField` | `false` |
+
+La escribe **únicamente la automatización**, y sólo cuando sale un mensaje **al cliente**.
+
+Se instrumentaron los 6 nodos de seguimiento que enviaban sin dejar rastro en HubSpot. Cada
+uno lleva colgado en paralelo un nodo `📅 Sellar fecha (WAn)`:
+
+| Nodo que envía | Plantilla | Alimentado por |
+|---|---|---|
+| `WhatsApp Business Cloud3` | `seguimiento_conversacion` (en) | `Separar Citas9` |
+| `WhatsApp Business Cloud4` | `continuar_flujo` (en) | `Separar Citas8` |
+| `WhatsApp Business Cloud5` | `seguimiento_conversacion_2` | `Separar Citas6` |
+| `WhatsApp Business Cloud9` | `continuar_flujo2` (en) | `Separar Citas7` |
+| `WhatsApp Business Cloud10` | `continuar_flujo_3` | `Separar Citas2` |
+| `WhatsApp Business Cloud12` | `seguimiento_conversacion_4` | `Separar Citas12` |
+
+```
+PATCH /crm/v3/objects/contacts/{{ $('Separar CitasN').item.json.id }}
+{ "properties": { "fecha_ultimo_mensaje": <epoch ms> } }
+```
+
+Van en **rama paralela** (no en serie) para no alterar el `$json` del bucle, y con
+`onError: continueRegularOutput`: **sellar la fecha nunca puede tumbar un envío**.
+
+El primer mensaje ya pasaba por `Crear y Actualizar Contacto8`, que marca `Iniciada`; ahí se
+agregó la propiedad en la misma llamada, sin nodo extra.
+
+**No se instrumentó** `mensaje_lead_agente` (`Cloud`, `Cloud1`): ese mensaje va al asesor, no
+al cliente, así que no debe mover el reloj. Tampoco los envíos de cierre, donde el lead ya
+terminó su ciclo.
+
+### El cálculo
+
+```js
+function fechaBase(props) {
+  const fum = props.fecha_ultimo_mensaje;
+  if (fum) return { valor: fum, origen: 'fecha_ultimo_mensaje' };
+  return { valor: props.lastmodifieddate, origen: 'lastmodifieddate (respaldo)' };
+}
+```
+
+Los leads anteriores al cambio no tienen la propiedad, así que **caen al comportamiento
+viejo** hasta que reciban su próximo mensaje — momento en el que quedan sellados y pasan al
+conteo correcto. La migración es automática y no hay que tocar datos históricos.
+
+La salida del nodo ahora expone `fecha_ultimo_mensaje` y `base_del_conteo`, para poder
+auditar en cada ejecución desde qué fecha se midió cada lead.
+
+Los tres buscadores piden la propiedad nueva en su array `properties`.
+
+### Verificación
+
+Prueba end-to-end con un contacto desechable: creado, sellado vía `PATCH` con
+`$now.toMillis()`, leído de vuelta y archivado.
+
+```
+valor leído: 2026-09-29T03:43:34.097Z   ->  2026-09-28 22:43 hora Colombia
+```
+
+HubSpot conserva el timestamp completo (no lo trunca a medianoche), que es lo que hace falta
+para medir horas. El workflow quedó en **210 nodos**, activo, sin perder ninguno de los 204
+anteriores.
