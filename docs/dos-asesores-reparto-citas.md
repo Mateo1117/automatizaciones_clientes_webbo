@@ -54,16 +54,21 @@ eventos en su calendario. A partir de ahí, la conexión que ya existe sirve par
 2. Haz clic en **"➕ Añadir personas y grupos"**.
 3. Escribe: `webbo.meetings@gmail.com`
 4. **Este es el paso crítico:** a la derecha hay un desplegable de permisos. Por defecto viene en
-   *"Ver todos los detalles del evento"*. **Cámbialo a "Hacer cambios en los eventos".** Si lo
-   dejas como viene, el bot podrá leer la agenda pero no crear citas, y fallará sin dar un error
-   claro.
+   *"Ver detalles de los eventos"*. **Cámbialo a "Hacer cambios y ver todos los detalles del
+   evento"** (la cuarta de la lista). Si lo dejas como viene, el bot podrá leer la agenda pero no
+   crear citas, y fallará sin dar un error claro.
 
    | Permiso | ¿Sirve? |
    |---|---|
-   | Ver solo libre/ocupado | ❌ no |
-   | Ver todos los detalles del evento | ❌ no — puede leer pero no crear |
-   | **Hacer cambios en los eventos** | ✅ **este** |
-   | Hacer cambios y gestionar el uso compartido | ✅ también, pero da más permiso del necesario |
+   | Ver solo libre/ocupado (ocultar detalles) | ❌ no |
+   | Ver detalles de los eventos | ❌ no — es la que viene puesta; solo lee |
+   | Hacer cambios (ver eventos privados como libre/ocupados) | ⚠️ crea citas, pero le oculta los detalles de los eventos privados al consultar la agenda |
+   | **Hacer cambios y ver todos los detalles del evento** | ✅ **esta** |
+   | Hacer cambios y gestionar el uso compartido | ⚠️ también sirve, pero además permite cambiar quién más tiene acceso — más de lo necesario |
+
+   > Los nombres cambian según la versión de Google Calendar. En versiones anteriores esta opción
+   > se llamaba *"Hacer cambios en los eventos"*. Lo que importa es que empiece por **"Hacer
+   > cambios"** y que **no** sea la de *"gestionar el uso compartido"*.
 
 5. Haz clic en **"Enviar"**.
 
