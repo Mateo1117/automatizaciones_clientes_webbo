@@ -128,84 +128,92 @@ Cierra el evento **sin guardar**. Solo estabas comprobando.
 
 ---
 
-## Parte 2 — Cuatro decisiones
+## Parte 2 — Lo que quedó decidido
 
-Te propongo una respuesta por defecto para cada una. Si te parecen bien, con que me digas
-**"todas OK"** es suficiente.
+| | Decisión |
+|---|---|
+| Asesores | `webbo.meetings@gmail.com` → **Pedro Casallas**<br>`comercialwebbo2@gmail.com` → **Katherine Cipagauta** |
+| Criterio de reparto | Por número de contacto de Solvot: par → Pedro, impar → Katherine |
+| Cliente que vuelve | Cae **siempre con el mismo asesor**, también si reagenda meses después |
+| Si el asesor no tiene hueco | Se le ofrece **otra hora del mismo asesor** dentro de 21 días (ver nota abajo) |
+| Horario | El mismo para los dos: L-V, 9:30-13:00 y 14:00-17:00, citas de 30 min, nunca el mismo día |
+| Invitados al evento | Cliente + asesor asignado |
 
-**1. ¿Qué pasa si al asesor que le toca no tiene hueco?**
-*Por defecto:* se alterna uno y uno, pero si al que le toca no le queda nada libre ese día, la
-cita pasa al otro. Alternar de forma rígida hace que se pierdan citas por insistir en un asesor
-que está lleno.
+> **Matiz importante sobre "si no tiene hueco".** La idea inicial era pasar la cita al otro asesor.
+> No se implementó así porque choca con la regla de *mismo cliente, mismo asesor*: el asesor va
+> atado al contacto desde el primer mensaje, antes de saber qué día pedirá. Si no hay hueco, el
+> bot ofrece otra hora de esa misma persona. Un cliente solo se quedaría sin cita si su asesor
+> estuviera lleno 21 días seguidos.
+>
+> Las dos reglas son incompatibles: o el cliente conserva asesor, o la cita salta al que esté
+> libre. Si se prefiere lo segundo, hay que rehacer el reparto con un contador en el CRM y una
+> segunda herramienta de disponibilidad para que el agente vea las dos agendas.
 
-**2. ¿Un cliente que vuelve a escribir cae con el mismo asesor?**
-*Por defecto:* sí. Si reagenda o pide una segunda reunión, le toca la misma persona. Lo
-contrario es que el cliente se encuentre con alguien que no sabe nada de la conversación
-anterior.
+## Parte 3 — Cambios aplicados en n8n
 
-**3. ¿Los dos atienden en el mismo horario?**
-*Por defecto:* sí — lunes a viernes, 9:30 a 13:00 y 14:00 a 17:00, citas de 30 minutos, nunca el
-mismo día. Es lo que ya tiene configurado el bot.
+Aplicados el 2026-10-05 sobre el workflow en vivo (67 nodos, activo). Respaldo del estado previo
+guardado antes de escribir.
 
-**4. ¿A quién se invita a la reunión?**
-*Por defecto:* al cliente y al asesor que le tocó, nada más. Hoy se invita siempre a
-`webbo.meetings`, incluso cuando no va a atender.
+| Nodo | Antes | Ahora |
+|---|---|---|
+| `Combinar contacto y mensaje` | — | Calcula `asesor_email` y `asesor_nombre` |
+| `Agendar cita` → calendario | fijo, `webbo.meetings@gmail.com` | el del asesor asignado |
+| `Agendar cita` → invitados | cliente + `webbo.meetings` siempre | cliente + asesor asignado |
+| `Consultar disponibilidad` → calendario | fijo, `webbo.meetings@gmail.com` | el del asesor asignado |
+| `Consultar disponibilidad` → ventana | **la agenda entera, sin filtro de fechas** | de hoy a 21 días |
+| `AI Agent` → prompt | — | Recibe el nombre del asesor para nombrarlo al confirmar |
 
-### Y un dato que sí necesito
+### Cómo se decide el asesor
 
-**¿Cómo se llama la persona detrás de cada correo?**
+En el nodo `Combinar contacto y mensaje`, antes de que el agente vea nada:
+
+```js
+const ASESORES = [
+  { email: 'webbo.meetings@gmail.com',  nombre: 'Pedro Casallas' },
+  { email: 'comercialwebbo2@gmail.com', nombre: 'Katherine Cipagauta' },
+];
+
+const idDigitos = String(msgFinal.contact_id || '').replace(/\D/g, '');
+const asesor = idDigitos
+  ? ASESORES[Number(idDigitos.slice(-6)) % ASESORES.length]
+  : ASESORES[0];
+```
+
+**Para cambiar asesores, correos o nombres solo se toca esa lista.** Nada más del flujo los
+menciona: el resto los lee de `asesor_email` y `asesor_nombre`.
+
+El reparto se simuló antes de aplicarlo: sobre 1.000 contactos correlativos sale **500 / 500**.
+Lo que no da es un 1-2-1-2 estricto — en un día de pocas citas puede salir 3 y 1. A cambio, el
+mismo cliente conserva asesor y no hay contador que se pueda perder o descuadrar.
+
+### Las dos expresiones que hacen el trabajo
+
+Tanto el calendario de `Agendar cita` como el de `Consultar disponibilidad` pasaron de texto fijo
+a:
 
 ```
-webbo.meetings@gmail.com   →  ¿nombre?
-comercialwebbo2@gmail.com  →  ¿nombre?
+={{ $('Combinar contacto y mensaje').first().json.asesor_email }}
 ```
 
-Lo uso para que Sofía pueda decir *"quedaste agendado el martes a las 10:00 con Pedro"* en vez
-de un genérico *"con nuestro equipo"*. Si prefieres que no mencione nombres, dímelo y lo dejo
-genérico.
+El de disponibilidad es el que se suele olvidar. Si se crea la cita en el calendario de uno pero
+se consulta la agenda del otro, se agendan reuniones encima de las que ya existían.
 
----
+### Verificación
 
-## Parte 3 — Lo que hago yo en n8n
-
-Para que sepas qué va a cambiar, no para que lo hagas tú.
-
-1. **Un nodo nuevo antes del agente** que decide a quién le toca y deja el correo y el nombre
-   del asesor listos para el resto del flujo.
-2. **`Agendar cita`**: el calendario deja de ser un texto fijo y pasa a ser el del asesor
-   asignado. Los invitados pasan a ser cliente + asesor asignado.
-3. **`Consultar disponibilidad`**: el mismo cambio de calendario. Este es el que normalmente se
-   olvida — si se crea la cita en el calendario de uno pero se consulta la agenda del otro, se
-   agendan reuniones encima de las que ya tenía.
-4. **El prompt de Sofía**: una línea para que nombre al asesor asignado.
-5. **De paso, un arreglo:** hoy `Consultar disponibilidad` pide el calendario **entero**, sin
-   filtro de fechas. Le está pasando a la IA todos los eventos que existan desde el principio de
-   los tiempos. Le pongo un filtro a la ventana de días que se está ofreciendo. Con dos
-   calendarios esto se duplicaría.
-
-### Cómo se decide el turno
-
-Empiezo por la opción que **no necesita infraestructura nueva**: el reparto sale del número de
-contacto del cliente (par → asesor A, impar → asesor B). Ventajas: el mismo cliente siempre cae
-con el mismo asesor (decisión 2 resuelta sola), reparte mitad y mitad sobre volumen, y no hay
-ningún contador que se pueda perder o descuadrar.
-
-Lo que **no** te da es un 1-2-1-2 exacto: en un día con pocas citas puede salir 3 y 1. Si
-necesitas que sea literalmente en orden, hay que guardar un contador en el CRM de Supabase —
-dímelo y lo montamos así, pero implica tocar la función `solvot-inbound`.
-
-### Cómo lo verifico
-
-No lo doy por bueno hasta tener una cita de prueba real creada en el calendario de
-`comercialwebbo2`, con su enlace de Meet y su invitación enviada. Si algo del permiso quedó a
-medias, aparece justo ahí.
-
----
+- ✅ Sintaxis del nodo Code comprobada con `node --check` antes de subir.
+- ✅ Reparto simulado: 500/500 sobre 1.000 contactos.
+- ✅ `PUT` devuelto con HTTP 200, workflow activo, `settings` intactos.
+- ⏳ **Pendiente: una cita de prueba real.** Las expresiones del calendario viven dentro de
+  herramientas del agente y solo se evalúan cuando alguien pide cita de verdad, así que hasta
+  que no se agende una no está probado de punta a punta. Lo que hay que mirar en esa prueba:
+  que el evento aparezca en el calendario del asesor que tocaba, que llegue la invitación al
+  cliente, y que el enlace de Meet se haya creado.
 
 ## Resumen
 
-| Quién | Qué | Tiempo |
-|---|---|---|
-| **Tú** | Parte 1: compartir el calendario y comprobarlo en el nodo `Agendar cita` | ~15 min |
-| **Tú** | Parte 2: "todas OK" + los dos nombres | 1 min |
-| **Yo** | Parte 3: cambios en n8n y prueba real | — |
+| Estado | |
+|---|---|
+| ✅ | Calendario de Katherine compartido con permiso de escritura y añadido |
+| ✅ | Decisiones tomadas y asesores definidos |
+| ✅ | Cambios aplicados en n8n, workflow activo |
+| ⏳ | Cita de prueba real que confirme el circuito completo |
