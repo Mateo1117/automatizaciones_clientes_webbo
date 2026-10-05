@@ -200,14 +200,44 @@ se consulta la agenda del otro, se agendan reuniones encima de las que ya exist�
 
 ### Verificación
 
-- ✅ Sintaxis del nodo Code comprobada con `node --check` antes de subir.
-- ✅ Reparto simulado: 500/500 sobre 1.000 contactos.
-- ✅ `PUT` devuelto con HTTP 200, workflow activo, `settings` intactos.
-- ⏳ **Pendiente: una cita de prueba real.** Las expresiones del calendario viven dentro de
-  herramientas del agente y solo se evalúan cuando alguien pide cita de verdad, así que hasta
-  que no se agende una no está probado de punta a punta. Lo que hay que mirar en esa prueba:
-  que el evento aparezca en el calendario del asesor que tocaba, que llegue la invitación al
-  cliente, y que el enlace de Meet se haya creado.
+Antes de aplicar:
+
+- ✅ Sintaxis del nodo Code comprobada con `node --check`.
+- ✅ Reparto simulado: 500/500 sobre 1.000 contactos correlativos.
+- ✅ `PUT` con HTTP 200, workflow activo, `settings` intactos.
+
+Con tráfico real, el mismo día:
+
+- ✅ **Enrutamiento en los dos sentidos.** Contacto `382754` (par) → Pedro Casallas; contacto
+  `234749` (impar) → Katherine Cipagauta.
+- ✅ **El nombre del asesor llega al prompt** del modelo (`Asesor asignado: Pedro Casallas`).
+- ✅ **Las expresiones funcionan dentro de las herramientas del agente**, que era el riesgo
+  técnico real: `Consultar disponibilidad` se ejecutó sin error contra el calendario asignado.
+- ✅ **Filtro de fechas activo**: devolvió 26 eventos de 5 días, no la agenda entera.
+- ✅ **Cita creada de punta a punta** en el calendario de Pedro:
+
+  ```
+  evento      : l7fcq7dbd0b2an8nsphjqfa570
+  organizador : webbo.meetings@gmail.com
+  inicio      : lunes 5 oct, 15:30 (hora Colombia)
+  meet        : enlace generado
+  invitados   : cliente + webbo.meetings@gmail.com
+  ```
+
+  Y respetó las reglas de agenda: el cliente escribió un domingo por la noche y la cita quedó el
+  lunes por la tarde, sin agendar el mismo día.
+
+Lo único que falta:
+
+- ⏳ **Escribir en el calendario de Katherine.** Todo lo verificado pasó por el calendario de
+  Pedro, que ya funcionaba antes. El de Katherine es el **compartido**, que es donde puede
+  fallar: crear un evento con enlace de Meet en un calendario ajeno es más delicado que en el
+  propio. Hace falta que un contacto impar llegue a agendar.
+
+  La forma rápida de forzarlo: retomar una conversación de contacto impar y pedir cita hasta el
+  final. Lo que hay que mirar entonces es que el organizador del evento sea
+  `comercialwebbo2@gmail.com`, que el enlace de Meet exista y que la invitación llegue al
+  cliente.
 
 ## Resumen
 
