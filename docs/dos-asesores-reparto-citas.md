@@ -37,18 +37,26 @@ eventos en su calendario. A partir de ahí, la conexión que ya existe sirve par
 ### Paso 1.2 — Abrir la configuración del calendario
 
 1. En la columna de la izquierda busca la sección **"Mis calendarios"**.
-2. Pasa el ratón por encima del calendario que se llama **comercialwebbo2@gmail.com** (es el
-   principal, el que lleva el nombre de la cuenta).
+2. Pasa el ratón por encima del calendario de esa cuenta. **Ojo: se llama "Comercial Webbo2", no
+   `comercialwebbo2@gmail.com`** — Google muestra el nombre que tenga puesto el calendario, no el
+   correo.
 3. Aparecen tres puntos verticales **⋮** a la derecha. Haz clic.
 4. Elige **"Configuración y uso compartido"**.
 
+> Si ya estás en la pantalla de *Configuración* (barra lateral con "Configuración de mis
+> calendarios" → el calendario desplegado), no hace falta nada de lo anterior: ya llegaste. Puedes
+> ir directo a **"Compartido con"** en esa barra lateral.
+
 ### Paso 1.3 — Compartir con permiso de escritura
 
-1. Baja hasta la sección **"Compartir con determinadas personas o grupos"**.
-2. Haz clic en **"Añadir personas y grupos"**.
+1. Baja hasta la sección **"Compartido con"** (en otras versiones de la interfaz se llama
+   *"Compartir con determinadas personas o grupos"* — es la misma).
+2. Haz clic en **"➕ Añadir personas y grupos"**.
 3. Escribe: `webbo.meetings@gmail.com`
 4. **Este es el paso crítico:** a la derecha hay un desplegable de permisos. Por defecto viene en
-   *"Ver todos los detalles del evento"*. **Cámbialo a "Hacer cambios en los eventos".**
+   *"Ver todos los detalles del evento"*. **Cámbialo a "Hacer cambios en los eventos".** Si lo
+   dejas como viene, el bot podrá leer la agenda pero no crear citas, y fallará sin dar un error
+   claro.
 
    | Permiso | ¿Sirve? |
    |---|---|
@@ -58,6 +66,10 @@ eventos en su calendario. A partir de ahí, la conexión que ya existe sirve par
    | Hacer cambios y gestionar el uso compartido | ✅ también, pero da más permiso del necesario |
 
 5. Haz clic en **"Enviar"**.
+
+> Mientras estás ahí, comprueba que la **zona horaria** del calendario sea
+> *(GMT-05:00) Hora estándar de Colombia*. El workflow trabaja en `America/Bogota`; si el segundo
+> calendario estuviera en otra zona, las citas saldrían corridas.
 
 ### Paso 1.4 — Aceptar la invitación desde la otra cuenta
 
