@@ -88,19 +88,43 @@ activa.**
 4. Se abre Google Calendar y el calendario de `comercialwebbo2` aparece en la columna izquierda,
    bajo **"Otros calendarios"**.
 
-### Paso 1.5 — Comprobar que funcionó (importante)
+#### Si el correo no llega (camino alternativo, suele ser más rápido)
 
-No te fíes de que "parece que sí". Hay una forma de verificarlo que no deja dudas:
+No hace falta el correo. Desde Google Calendar con la cuenta `webbo.meetings@gmail.com`:
 
-1. Entra a n8n: **https://n8n-n8n.qhwbfx.easypanel.host**
-2. Abre el workflow **WEBBO - Bot completo CORREGIDO (audio+imagen+texto)**.
-3. Busca el nodo **`Agendar cita`** y haz doble clic.
-4. En el campo **Calendar** despliega la lista.
-5. **Si en la lista aparece `comercialwebbo2@gmail.com`, el permiso quedó bien.** Si solo sale
-   `webbo.meetings@gmail.com`, algo falló — revisa el paso 1.3 (el desplegable de permisos) y el
-   1.4 (aceptar el correo).
+1. Barra lateral izquierda → **"Agregar calendario"** (tiene una flecha ⌄).
+2. Elige **"Suscribirme a un calendario"** (en otras versiones, *"Suscribirse al calendario"*).
+3. En el campo **"Agregar calendario"** escribe `comercialwebbo2@gmail.com` y pulsa **Enter**.
 
-> Cierra el nodo **sin guardar** (tecla `Esc` o la X). Solo estabas mirando.
+Si se añade, aparece en la barra lateral bajo **"Otros calendarios"**. Si en vez de añadirlo
+Google ofrece un botón de **"Solicitar acceso"**, el permiso del paso 1.3 no llegó a guardarse.
+
+> Los nombres de los calendarios no coinciden con los correos: en una cuenta el calendario se
+> llama **"Webbo IA"** y en la otra **"Comercial Webbo2"**. Google muestra el nombre, no la
+> dirección, y eso hace difícil encontrarlos buscando por el correo.
+
+### Paso 1.5 — Comprobar que el permiso es de ESCRITURA
+
+> ⚠️ **Cuidado con el falso positivo.** Que el calendario aparezca en la lista de
+> `webbo.meetings` — o en el desplegable de n8n — **no prueba que se pueda escribir en él**. Con
+> permiso de solo lectura se añade exactamente igual. La única comprobación válida es intentar
+> crear un evento.
+
+En Google Calendar, con la cuenta **`webbo.meetings@gmail.com`**:
+
+1. Pulsa **"Crear"** → **"Evento"**.
+2. Busca el **desplegable del calendario** dentro del formulario (el que indica dónde se guarda;
+   por defecto marcará el calendario propio de la cuenta).
+3. Despliégalo y mira la lista.
+
+- **Aparece "Comercial Webbo2"** → hay permiso de escritura ✅
+- **No aparece** → el permiso quedó en solo lectura ❌ Vuelve al paso 1.3 y asegúrate de elegir
+  *"Hacer cambios y ver todos los detalles del evento"* antes de pulsar **Enviar**.
+
+Cierra el evento **sin guardar**. Solo estabas comprobando.
+
+> La prueba definitiva es la cita de prueba real que se crea al final, en la Parte 3. Esta
+> comprobación solo sirve para detectar el problema antes de tocar el workflow.
 
 ---
 
