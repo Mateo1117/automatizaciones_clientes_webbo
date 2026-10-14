@@ -936,3 +936,139 @@ valor leído: 2026-09-29T03:43:34.097Z   ->  2026-09-28 22:43 hora Colombia
 HubSpot conserva el timestamp completo (no lo trunca a medianoche), que es lo que hace falta
 para medir horas. El workflow quedó en **210 nodos**, activo, sin perder ninguno de los 204
 anteriores.
+
+
+---
+
+## Queja del cliente (14-oct): "no se cambia el estado del lead, como si Solvot no se activara"
+
+Reporte de Viviana Calderón: leads que no cambian de estado, varios llegados por Facebook Ads
+el fin de semana con el campo *estado del lead* vacío, y por tanto sin asignar a asesor.
+Contacto de referencia: **254509167909**.
+
+### Lo que mostró la ficha
+
+| Campo | Valor |
+|---|---|
+| nombre | Luna Mar |
+| `proyecto` | **Tatika** ✓ |
+| `fuente` | FACEBOOK ADS |
+| `automatizacion` | **vacía** — la automatización nunca la escribió |
+| `hs_lead_status` | **vacío**, 0 cambios en el historial |
+| `phone` | `+5733105236254194` — **16 dígitos, malformado** |
+| `mobilephone` | `3004935208` — válido |
+| notas | 0 |
+
+La primera hipótesis (que el filtro `proyecto EQ "Tatika"` lo excluyera) quedó **descartada**:
+el contacto sí tiene `proyecto = Tatika`, puesto por un workflow de HubSpot un minuto después
+de crearse.
+
+### La causa real
+
+El lead **sí entró** a la automatización, dos veces (10-12 a las 10:00 y a las 11:00). El
+recorrido llegó hasta validar el teléfono y **murió en `crear contacto`** de Chatwoot:
+
+```
+Your request is invalid or could not be processed by the service
+Phone number should be in e164 format
+```
+
+El nodo `Verificar Teléfono3` hace bien su trabajo: descarta el `phone` malformado y deja
+`telefono = +573004935208` (el móvil válido). El objeto que arma expone:
+
+```json
+"phone_numbers": {
+  "primary": "+573004935208",            // el bueno
+  "all_numbers": {
+    "phone": "+5733105236254194",        // el crudo, inválido
+    "mobilephone": "+573004935208",
+    "whatsapp_number": "+5733105236254194"
+  }
+}
+```
+
+Y ahí estaba el desfase: **cada nodo usaba un campo distinto.**
+
+| Nodo | Campo que usaba | Valor | |
+|---|---|---|---|
+| `WhatsApp Business Cloud14` | `phone_numbers.primary` | `+573004935208` | ✅ correcto |
+| `buscar contacto` (Chatwoot) | `all_numbers.phone` | `+5733105236254194` | ❌ nunca encontraba nada |
+| `crear contacto` (Chatwoot) | `all_numbers.phone` | `+5733105236254194` | ❌ **422 y muere** |
+
+La cadena gemela de Colina (`crear contacto2`) ya usaba el número formateado
+(`telefonoFormateado`), así que el error era exclusivo de la rama de Tatiká.
+
+### Lo grave: un contacto malo bloqueaba el lote entero
+
+`crear contacto` no tenía manejo de error, así que al fallar **aborta toda la ejecución** y
+abandona los leads que faltaban del `Loop Over Items`. Medido sobre las ejecuciones del
+12-oct 09:00–11:59:
+
+```
+09:00  leads=1   procesados=1   ok
+09:15  leads=1   procesados=1   ok
+09:30  leads=2   procesados=2   ok
+09:45  leads=3   procesados=2   ok
+10:00  leads=3   procesados=1   <- MUERE en crear contacto: 2 leads abandonados
+10:15  leads=2   procesados=2   ok
+10:30  leads=1   procesados=1   ok
+11:00  leads=20  procesados=2   <- MUERE en crear contacto: 18 leads abandonados
+11:15  leads=1   procesados=1   ok
+```
+
+**20 leads abandonados en tres horas** por un único contacto con el teléfono mal. Eso es lo
+que el cliente percibía como *"es como si Solvot no se estuviera activando"*: no fallaba un
+lead, fallaba todo el ciclo detrás de él.
+
+### Corregido
+
+1. **`buscar contacto`**: `q` pasa de `all_numbers.phone` a **`phone_numbers.primary`**.
+   De paso se limpió el nombre del parámetro, que era `"=q"` con un `=` suelto.
+2. **`crear contacto`**: `phone_number` pasa de `all_numbers.phone` a
+   **`phone_numbers.primary`** — el mismo número al que se le manda el WhatsApp, así el
+   contacto de Chatwoot y el destinatario del mensaje por fin coinciden.
+3. **Contención**: `crear contacto` queda con `onError: continueErrorOutput` y `retry x2`. La
+   rama de error marca `automatizacion = Error`, deja una nota explicando que Chatwoot
+   rechazó el número, y vuelve a `Finalizar Envío` para que **el lote continúe**. Un contacto
+   con datos malos ya no puede arrastrar a los demás.
+
+Workflow `sDZyht21H9H3w2Tl`: 210 → 212 nodos, activo, sin perder ninguno.
+
+### Alcance: 12 leads de Tatiká atascados desde el 1 de octubre
+
+De 70 contactos de Tatiká creados desde el 01-oct, **12 quedaron sin `automatizacion`**. No
+todos por la misma causa:
+
+| Causa | Leads |
+|---|---|
+| Teléfono malformado → Chatwoot 422 (el bug corregido) | 1 (Luna Mar) |
+| Sin teléfono en la ficha | 5 (todos `WEB CONARING`) |
+| `hs_lead_status = Contactado` → el `Switch` los descarta a propósito | 9 |
+| Sin causa evidente, revisar | 1 (Ligia Vallesteros) |
+
+(Las categorías se solapan: varios sin teléfono están además en `Contactado`.)
+
+El listado completo se entregó como CSV al cliente. No se versiona por llevar datos
+personales.
+
+### Pendiente de decisión del cliente: el choque con la asignación
+
+Viviana dice: *"si no me cambia el estado no se asigna a asesor"*. Pero la especificación del
+cliente (Caso 1, 7-sep) ordena exactamente lo contrario:
+
+> **1. Cuando se inicia la automatización con un lead.**
+> - Automatización: Iniciada
+> - **Estado del lead: Vacío**
+
+O sea, **todo lead dentro de la automatización tiene el estado vacío por diseño**, y el
+proceso de asignación depende de que no lo esté. Las dos reglas son incompatibles y eso no se
+arregla con código: hay que decidir cuál gana.
+
+Opciones:
+
+1. Poner un estado durante la automatización (`Pendiente` o `Nuevo lead`) — contradice el
+   Caso 1 tal como está escrito.
+2. Cambiar el criterio de asignación para que mire `automatizacion` en lugar del estado del
+   lead — respeta el Caso 1 y además es más preciso.
+
+La opción 2 es la recomendada, pero es una decisión de proceso comercial, no técnica.
