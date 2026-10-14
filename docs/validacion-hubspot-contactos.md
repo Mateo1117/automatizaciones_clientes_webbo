@@ -1072,3 +1072,123 @@ Opciones:
    lead — respeta el Caso 1 y además es más preciso.
 
 La opción 2 es la recomendada, pero es una decisión de proceso comercial, no técnica.
+
+
+---
+
+## Auditoría a fondo: por qué se perdían leads y qué se blindó
+
+Pedido del cliente tras el incidente del 14-oct: *"no debe quedar fuera, revise más a fondo y
+vea qué más podemos mejorar para que esto no vuelva a pasar"*.
+
+### 1. El teléfono: eran dos fallas encadenadas, no una
+
+**a) El poller ni siquiera pedía los otros campos de teléfono.** Su array `properties` era:
+
+```
+firstname, lastname, email, phone, proyecto, hs_object_id,
+createdate, lastmodifieddate, automatizacion, hs_lead_status
+```
+
+Sin `mobilephone`, `numero_de_telefono` ni `numero_de_movil`. El dato **nunca llegaba al
+flujo**, así que ningún nodo aguas abajo podía usarlo aunque quisiera.
+
+**b) `extraer leads` leía sólo `props.phone`:**
+
+```js
+telefono: props.phone || "",
+```
+
+Un lead con el número únicamente en el móvil salía con `telefono: ''` y moría más adelante
+sin dejar rastro.
+
+**Corregido.** El poller pide ahora los cuatro campos de teléfono más `fuente` y
+`punto_de_contacto`, y `extraer leads` busca en cascada:
+
+```js
+function primerTelefono(props) {
+  const candidatos = [props.phone, props.mobilephone, props.numero_de_telefono, props.numero_de_movil];
+  for (const c of candidatos) {
+    const v = (c === null || c === undefined) ? '' : String(c).trim();
+    if (v && (v.match(/\d/g) || []).length >= 7) return v;   // descarta basura
+  }
+  return '';
+}
+```
+
+El mínimo de 7 dígitos hace que un `phone` basura (por ejemplo `"123"`) caiga al móvil en vez
+de pasar como válido. Además se expone `telefono_origen` en la salida, para poder auditar en
+cualquier ejecución de qué propiedad salió el número.
+
+Probado con 7 casos:
+
+| Caso | `phone` | `mobilephone` | otro | Resultado |
+|---|---|---|---|---|
+| sólo móvil | — | `+573001112233` | — | usa `mobilephone` ✅ |
+| sólo phone | `+573002223344` | — | — | usa `phone` ✅ |
+| ambos | `+573003334455` | `+573009998877` | — | prefiere `phone` ✅ |
+| phone basura | `123` | `+573004445566` | — | cae al `mobilephone` ✅ |
+| campo alterno | — | — | `numero_de_movil` | lo usa ✅ |
+| sin teléfono, con email | — | — | — | entra con `origen: ninguno` ✅ |
+| sin nada | — | — | — | descartado, y **se registra en el log** ✅ |
+
+**Alcance medido en HubSpot:**
+
+| Consulta | Contactos |
+|---|---|
+| Tatiká con `mobilephone` pero sin `phone` | **150** |
+| …de esos, **sin `automatizacion`** (nunca procesados) | **143** |
+| Tatiká sin ningún teléfono | 70 |
+
+No eran 12 leads: eran **143**.
+
+### 2. `extraer leads` se tragaba los errores en silencio
+
+```js
+} catch (error) {
+  return [];        // <- cualquier fallo devolvia cero leads, sin rastro
+}
+```
+
+Si algo lanzaba una excepción, el ciclo terminaba con cero leads y **la ejecución aparecía
+como exitosa**. Es la razón de fondo por la que estos problemas eran invisibles: el flujo
+nunca se quejaba.
+
+Se eliminó el `catch`. Ahora el error se propaga y queda registrado en la ejecución. Se
+agregaron además dos `console.log`: cuántos leads se extrajeron, cuántos quedaron sin
+teléfono, y los ids de los descartados.
+
+### 3. Contención: 22 nodos de API sin ningún manejo de error
+
+Cualquier fallo de Chatwoot, WhatsApp o HubSpot **abortaba la ejecución completa** y
+abandonaba los leads restantes del `Loop Over Items` — como los 18 abandonados del 12-oct.
+
+**Cadena principal** (`crear contacto`, `crear conversacion`, `Busca conversacion`,
+`Actualizar contacto`, `status a pendiente`, `WhatsApp Business Cloud14`): `retryOnFail` ×3 y
+rama de error a `⚠️ Fallo en el envio (marca Error)`, que marca `automatizacion = Error`,
+deja una nota explicando qué pasó y devuelve el control a `Finalizar Envío` para que el lote
+continúe. El lead queda **visible** en vez de desaparecer.
+
+**Seguimientos** (los 6 nodos de `Separar Citas`): `retryOnFail` ×3 y, si el envío falla, el
+bucle continúa **sin pasar por `📅 Sellar fecha`**. Así `fecha_ultimo_mensaje` no se actualiza
+y el lead se reintenta en el siguiente ciclo, en lugar de darse por enviado.
+
+**Resto**: `retryOnFail` ×3 en los 11 nodos de API vivos que no tenían ninguno.
+
+Resultado: **0 nodos de API vivos sin protección** (antes 22).
+
+### 4. Lo que sigue abierto
+
+- **Los 143 atascados no se recuperan solos.** El poller sólo mira contactos modificados en
+  los últimos 20 minutos, así que hay que tocarlos para que vuelvan a entrar. **Hacerlo de
+  golpe significaría 143 plantillas MARKETING en un ciclo**, justo el patrón que dispara el
+  `131049` de Meta y degrada la calidad del número. Recomendación: por tandas de 30–40 al día.
+- **Las puertas por fuente** (`Contact Exists?8/9/10`) sólo dejan pasar `FACEBOOK ADS`,
+  `WEB CONARING` y `TikTok`. Los `REFERIDO`, `OTROS` y `VANGUARDIA` se descartan en silencio.
+  No se tocó: hace falta saber si es intencional.
+- **Los descartes intencionales siguen sin rastro**: `Switch` salida 1 (`SIN CONTACTO`) y
+  salida 4 (`Aut Iniciada`) mandan el lead al bucle sin registrar nada. Es correcto
+  funcionalmente, pero hace difícil distinguir "lo omití a propósito" de "se perdió". Dejarlo
+  así es razonable por volumen; conviene saberlo al diagnosticar.
+- **`limit: 100`** en el poller: si en una ventana de 20 minutos se modificaran más de 100
+  contactos de Tatiká, los excedentes se quedarían fuera de ese ciclo.
