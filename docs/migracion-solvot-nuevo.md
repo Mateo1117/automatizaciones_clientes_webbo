@@ -98,7 +98,10 @@ El `contact_id` con doble origen cubre las dos ramas: contacto recién creado
 
 ---
 
-## Dos bugs latentes encontrados al extraer la especificación
+## Dos bugs latentes encontrados al extraer la especificación — ✅ CORREGIDOS 14-nov
+
+Se corrigieron sin esperar al Solvot nuevo, porque son independientes del dominio: el
+workflow quedó en **213 nodos** (antes 212) y sigue activo.
 
 ### B1 — `status a pendiente` usa el id del asesor, no el de la conversación
 
@@ -118,8 +121,39 @@ existente**. Para un contacto nuevo ese nodo nunca corrió y la expresión revie
 Antes de la contención de octubre esto mataba el lote completo. Hoy cae en el manejador de
 error, pero el `toggle_status` no se aplica.
 
-**Ambos se corrigen en la migración**, tomando el id de la conversación de la respuesta de
-`crear conversacion` o de `Busca conversacion` según la rama.
+### Cómo quedaron corregidos
+
+Se insertó un nodo **`🔎 Resolver id de conversacion`** entre `Crear y Actualizar Contacto8`
+y `status a pendiente`. Resuelve el id de la rama que haya corrido, leyendo cada origen
+dentro de un `try` (referenciar un nodo que no se ejecutó lanza excepción):
+
+```js
+let convId = '';
+try { convId = String($('Busca conversacion').first().json.payload[0].id); } catch (e) {}
+if (!convId) { try { convId = String($('crear conversacion').first().json.id); } catch (e) {} }
+```
+
+`status a pendiente` pasó a `…/conversations/{{ $json.conversacion_id }}/toggle_status`
+(también se quitó un espacio al final de la URL, que iba al path).
+
+### B3 — bonus: el fallo del `toggle_status` marcaba el lead como `Error`
+
+Encontrado al revisar las conexiones. La salida de error de `status a pendiente` iba a
+`⚠️ Fallo en el envio (marca Error)`. Pero ese nodo corre **después** de
+`WhatsApp Cloud14 → Wait → Crear y Actualizar Contacto8`: para cuando se ejecuta, **el
+mensaje ya salió y el lead ya quedó en `Iniciada`**. Si fallaba el cambio de estado en
+Chatwoot —algo cosmético— se sobrescribía a `Error` un lead que sí había sido contactado.
+
+Eso lo introduje yo en la contención de octubre, al enrutar las 22 salidas de error al mismo
+manejador sin separar las que ocurren antes del envío de las que ocurren después.
+
+Ahora esa rama va a `Finalizar Envío`: se registra y el bucle continúa, sin tocar el estado.
+
+| | Antes | Ahora |
+|---|---|---|
+| Contacto nuevo | expresión reventaba, nunca se aplicaba `pending` | se aplica con el id de `crear conversacion` |
+| Contacto existente | apuntaba al id del **asesor** → 404 o conversación ajena | id real de `payload[0].id` |
+| Si Chatwoot falla | lead marcado `Error` pese a haber recibido el mensaje | lead queda `Iniciada`, que es la verdad |
 
 ---
 
@@ -135,35 +169,116 @@ un solo sitio**, y el token no vuelve a aparecer en el JSON del workflow.
 
 ---
 
-## Qué hace falta del Solvot nuevo
+## Datos que hay que pedir / crear en el tenant nuevo
 
-| Dato | Viejo | Nuevo |
+Esto es el inventario completo, verificado el 14-nov contra el workflow vivo
+(`sDZyht21H9H3w2Tl`). Nada de esto se puede inventar desde n8n: son datos que da el tenant.
+
+### A. Los 5 datos que bloquean la migración
+
+| # | Dato | Valor viejo | Dónde se ve en el tenant nuevo | Se usa en |
+|---|---|---|---|---|
+| 1 | **Dominio** | `chat.solvot.com` | la URL de la barra al entrar | 14 nodos |
+| 2 | **`account_id`** | `60` | está en la propia URL: `/app/accounts/**60**/dashboard` | 14 nodos |
+| 3 | **`inbox_id`** de Tatiká | `105` | Configuración → Bandejas → abrir la de Tatiká; sale en la URL `/settings/inboxes/**105**` | `crear contacto`, `crear conversacion` |
+| 4 | **`team_id`** | `18` | Configuración → Equipos → abrir el equipo; sale en la URL | `crear conversacion` |
+| 5 | **Token de acceso** | 2 tokens distintos | Perfil → *Access Token* (token de un usuario) **o** Configuración → Integraciones → API (token de bot) | header `api_access_token` |
+
+> **Sobre el token:** hoy hay **dos** (`hwWCD8…` para leer, `ioGpXH…` para escribir). En el
+> tenant nuevo alcanza con **uno solo**, siempre que el usuario dueño del token tenga rol
+> **administrador** de la cuenta. Un token de agente no puede crear contactos ni cambiar el
+> estado de conversaciones ajenas.
+>
+> **El token no se pega en el chat.** Se crea en n8n como credencial *Header Auth*
+> (nombre `api_access_token`) y yo sólo uso su ID. Ver la sección de abajo.
+
+### B. Lo que hay que configurar dentro del tenant
+
+**1. La bandeja (inbox) y el número de WhatsApp.**
+El número debe ser el mismo: **`+57 302 7560683`**, `phone_number_id` `696830786845937`.
+
+Ojo con esto, porque es la confusión más fácil: **quien envía el WhatsApp es n8n, no
+Chatwoot.** Los 7 nodos `WhatsApp Business Cloud*` llaman a Meta directo con ese
+`phone_number_id` y las plantillas `saludo_tatika3`, `mensaje_lead_agente`,
+`finaliza_flujo_cliente`, `finaliza_colina_viento`. El Solvot sirve para **recibir las
+respuestas** y para que el asesor conteste.
+
+Si el número cambia, hay que tocar además los 24 nodos de WhatsApp y volver a aprobar
+plantillas en Meta. **Conviene conservarlo.**
+
+**2. Confirmar con Solvot el tipo de canal de la bandeja.** `crear conversacion` manda un
+`message.content` al crear la conversación. Según el tipo de canal eso se comporta distinto:
+
+| Si la bandeja es… | Qué pasa con ese `message` | Riesgo |
 |---|---|---|
-| Dominio | `chat.solvot.com` | ? |
-| `account_id` | `60` | ? |
-| `inbox_id` de Tatiká | `105` | ? |
-| `team_id` | `18` | ? |
-| Token | 2 hardcodeados | se crea como credencial en n8n |
+| Canal **API** | queda registrado como contexto, no se envía | ninguno — es lo que se asume hoy |
+| Canal **WhatsApp** | Chatwoot intenta **entregarlo** | mensaje duplicado, o error fuera de la ventana de 24 h |
 
-### Del lado del Solvot nuevo (no se puede hacer desde n8n)
+No se puede determinar desde fuera porque el tenant viejo ya está caído. **Hay que
+preguntarlo al crear la bandeja nueva**, y si queda como canal WhatsApp, quitar el `message`
+del body.
 
-1. **El inbox debe estar conectado al mismo número de WhatsApp**: `+57 302 7560683`
-   (`phone_number_id 696830786845937`). Si cambia el número, también hay que actualizar los
-   24 nodos de WhatsApp y volver a aprobar plantillas.
-2. **Recrear las automatizaciones que llamaban a n8n.** Estos webhooks siguen activos y
-   esperando:
+**3. Atributos personalizados del contacto.** `crear contacto` y `Actualizar contacto` envían:
 
-   ```
-   respuesta_cliente_tatika      respuesta_cliente_tatika1     respuesta_cliente_tatika2
-   respuesta_cliente_tatika3     respuesta_cliente_tatika4     respuesta_cliente_tatika5
-   respuesta_cliente_tatika6     respuesta_cliente_tatika7
-   conaring-lead
-   respuesta_cliente_colina      respuesta_cliente_colina_viento
-   respuesta_cliente_colina_viento_llamada
-   respuesta_cliente_colina_viento_no_interesa
-   ```
+```json
+"custom_attributes": { "email": "…", "proyecto": "…" }
+```
 
-   URL completa: `https://flow.mcmasociados.tech/webhook/<path>`
+Si `email` y `proyecto` no existen como **atributos personalizados de contacto** en el tenant
+nuevo (Configuración → Atributos personalizados), Chatwoot acepta la petición pero
+**descarta los valores en silencio** — y el asesor pierde el proyecto del lead.
+
+**4. Los asesores y el equipo.** El `team_id` es a quien se le asigna la conversación. El
+equipo tiene que existir y tener agentes dentro, o las conversaciones llegan sin asignar.
+
+**5. Las automatizaciones que llaman de vuelta a n8n.** Estos 13 webhooks **siguen activos y
+esperando** en `https://flow.mcmasociados.tech/webhook/<path>`:
+
+```
+respuesta_cliente_tatika      respuesta_cliente_tatika1     respuesta_cliente_tatika2
+respuesta_cliente_tatika3     respuesta_cliente_tatika4     respuesta_cliente_tatika5
+respuesta_cliente_tatika6     respuesta_cliente_tatika7
+conaring-lead
+respuesta_cliente_colina      respuesta_cliente_colina_viento
+respuesta_cliente_colina_viento_llamada
+respuesta_cliente_colina_viento_no_interesa
+```
+
+Sin recrearlas, el flujo manda el primer mensaje pero **nunca se entera de que el cliente
+respondió**: el lead se queda en `Iniciada` para siempre y entra en recordatorios que no
+corresponden.
+
+### C. Lo que NO hace falta pedir
+
+- **El `account_id` de Webbo (64) y su inbox 131** son de otro cliente y de otra instancia de
+  n8n. No entran en esta migración.
+- **Los 8 nodos gemelos de Colina del Viento** están deshabilitados y así se quedan: por
+  instrucción del cliente, Colina no envía ni se le hace seguimiento.
+- **Nada de HubSpot cambia.** La integración con HubSpot es independiente del Solvot y sigue
+  igual.
+
+### D. Plantilla para responder
+
+```
+Dominio:        https://________________
+account_id:     ____
+inbox_id:       ____   (bandeja de Tatiká)
+team_id:        ____
+Número WhatsApp de la bandeja:  +57 ___ _______   (¿es el mismo 302 7560683?)
+Tipo de canal de la bandeja:    [ ] API    [ ] WhatsApp Cloud
+Atributos "email" y "proyecto" creados:   [ ] sí  [ ] no
+Token: NO escribirlo aquí — crearlo como credencial en n8n (ver abajo)
+```
+
+### Cómo entregar el token sin exponerlo
+
+1. En n8n → **Credentials** → **New** → **Header Auth**.
+2. Nombre: `Solvot nuevo — api_access_token`.
+3. *Header Name*: `api_access_token` · *Header Value*: el token del tenant nuevo.
+4. Guardar y **adjuntarla al nodo `buscar contacto`** del workflow.
+
+Con eso leo el ID de la credencial y la replico en los otros 5 nodos sin ver nunca el valor.
+A partir de ahí, rotar el token es un cambio en un solo sitio en vez de 14.
 
 ---
 
@@ -172,7 +287,7 @@ un solo sitio**, y el token no vuelve a aparecer en el JSON del workflow.
 1. Crear la credencial Header Auth en n8n con el token del Solvot nuevo.
 2. Reapuntar los 6 nodos vivos (y los 8 gemelos de Colina, por consistencia): dominio,
    `account_id`, `inbox_id`, `team_id`, y la credencial en lugar del header a mano.
-3. Corregir B1 y B2.
+3. ~~Corregir B1 y B2.~~ ✅ hecho el 14-nov, ya está en producción.
 4. Probar con un contacto de prueba antes de dar por buena la migración.
 5. Recuperar los 56 leads en `Error`: tocarlos para que vuelvan a entrar, **por tandas** —
    de golpe serían 56 plantillas MARKETING en un ciclo, con el riesgo de `131049` de Meta.
